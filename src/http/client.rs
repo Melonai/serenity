@@ -53,14 +53,7 @@ impl Http {
     pub fn new_with_token(token: &str) -> Self {
         let builder = configure_client_backend(Client::builder());
         let built = builder.build().expect("Cannot build reqwest::Client");
-
-        let token = if token.trim().starts_with("Bot ") {
-            token.to_string()
-        } else {
-            format!("Bot {}", token)
-        };
-
-        Self::new(Arc::new(built), &token)
+        Self::new(Arc::new(built), token)
     }
 
     /// Adds a single [`Role`] to a [`Member`] in a [`Guild`].
