@@ -1,0 +1,20 @@
+name: Merge upstream branches
+on:
+  schedule:
+    - cron:  '0 0 * * 0'
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Merge upstream
+        run: |
+          git config --global user.name 'Upstream Updater'
+          git config --global user.email 'upstream@example.com'
+          git pull --unshallow  
+          git remote add upstream https://github.com/serenity-rs/serenity.git
+          git fetch upstream
+
+          git checkout current
+          git merge --no-edit upstream/current
+          git push origin master
