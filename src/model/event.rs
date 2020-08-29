@@ -61,6 +61,7 @@ impl CacheUpdate for ChannelCreateEvent {
 
     async fn update(&mut self, cache: &Cache) -> Option<Self::Output> {
         match self.channel {
+            Channel::Group(_) => None,
             Channel::Guild(ref channel) => {
                 let (guild_id, channel_id) = (channel.guild_id, channel.id);
 
@@ -161,6 +162,7 @@ impl CacheUpdate for ChannelDeleteEvent {
 
                 cache.private_channels.write().await.remove(&id);
             },
+            Channel::Group(_) |
             Channel::__Nonexhaustive => unreachable!(),
         };
 
@@ -259,6 +261,7 @@ impl CacheUpdate for ChannelUpdateEvent {
                     .get_mut(&category.id)
                     .map(|c| c.clone_from(category));
             },
+            Channel::Group(_) |
             Channel::__Nonexhaustive => unreachable!(),
         }
 

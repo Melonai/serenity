@@ -27,11 +27,18 @@ impl Mentionable for ChannelId {
 impl Mentionable for Channel {
     fn mention(&self) -> String {
         match self {
+            Channel::Group(channel) => channel.mention(),
             Channel::Guild(channel) => channel.mention(),
             Channel::Private(channel) => channel.mention(),
             Channel::Category(channel) => channel.mention(),
             Channel::__Nonexhaustive => unreachable!(),
         }
+    }
+}
+
+impl Mentionable for Group {
+    fn mention(&self) -> String {
+        format!("<#{}>", self.name())
     }
 }
 

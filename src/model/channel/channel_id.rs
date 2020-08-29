@@ -415,6 +415,7 @@ impl ChannelId {
         let channel = self.to_channel_cached(cache).await?;
 
         Some(match channel {
+            Channel::Group(group) => group.name().to_string(),
             Channel::Guild(channel) => channel.name().to_string(),
             Channel::Category(category) => category.name().to_string(),
             Channel::Private(channel) => channel.name(),

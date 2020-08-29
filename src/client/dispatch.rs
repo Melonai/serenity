@@ -337,6 +337,7 @@ async fn handle_event(
             // This could potentially be annoying to handle when otherwise wanting to normally take care of a new channel.
             // So therefore, private channels are dispatched to their own handler code.
             match event.channel {
+                Channel::Group(_) => {},
                 Channel::Private(channel) => {
                     let event_handler = Arc::clone(event_handler);
 
@@ -365,7 +366,7 @@ async fn handle_event(
             update(&cache_and_http, &mut event).await;
 
             match event.channel {
-                Channel::Private(_) => {},
+                Channel::Group(_) | Channel::Private(_) => {},
                 Channel::Guild(channel) => {
                     let event_handler = Arc::clone(event_handler);
 
