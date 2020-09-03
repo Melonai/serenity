@@ -162,7 +162,7 @@ impl CacheUpdate for ChannelDeleteEvent {
 
                 cache.private_channels.write().await.remove(&id);
             },
-            Channel::Group(_) |
+            Channel::Group(_) => {},
             Channel::__Nonexhaustive => unreachable!(),
         };
 
@@ -261,7 +261,7 @@ impl CacheUpdate for ChannelUpdateEvent {
                     .get_mut(&category.id)
                     .map(|c| c.clone_from(category));
             },
-            Channel::Group(_) |
+            Channel::Group(_) => {},
             Channel::__Nonexhaustive => unreachable!(),
         }
 
