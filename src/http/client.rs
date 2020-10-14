@@ -16,6 +16,7 @@ use super::{
     ratelimiting::{Ratelimiter, RatelimitedRequest},
     request::Request,
     routing::RouteInfo,
+    typing::Typing,
     AttachmentType,
     GuildPagination,
     HttpError,
@@ -23,9 +24,10 @@ use super::{
 use bytes::buf::Buf;
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use log::{debug, trace};
+use tracing::{debug, trace, instrument};
 use std::{
     collections::BTreeMap,
+    fmt,
     sync::Arc,
 };
 use tokio::{
@@ -34,9 +36,18 @@ use tokio::{
 };
 
 pub struct Http {
-    client: Arc<Client>,
+    pub(crate) client: Arc<Client>,
     pub ratelimiter: Ratelimiter,
     pub token: String,
+}
+
+impl fmt::Debug for Http {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Http")
+            .field("client", &self.client)
+            .field("ratelimiter", &self.ratelimiter)
+            .finish()
+    }
 }
 
 impl Http {
@@ -1220,7 +1231,6 @@ impl Http {
         let (after, before) = match *target {
             GuildPagination::After(id) => (Some(id.0), None),
             GuildPagination::Before(id) => (None, Some(id.0)),
-            GuildPagination::__Nonexhaustive => unreachable!(),
         };
 
         self.fire(Request {
@@ -1467,10 +1477,10 @@ impl Http {
     /// # Errors
     ///
     /// Returns an
-    /// [`HttpError::InvalidRequest(PayloadTooLarge)`][`HttpError::InvalidRequest`]
+    /// [`HttpError::UnsuccessfulRequest(ErrorResponse)`][`HttpError::UnsuccessfulRequest`]
     /// if the file is too large to send.
     ///
-    /// [`HttpError::InvalidRequest`]: enum.HttpError.html#variant.InvalidRequest
+    /// [`HttpError::UnsuccessfulRequest`]: enum.HttpError.html#variant.UnsuccessfulRequest
     pub async fn send_files<'a, T, It: IntoIterator<Item=T>>(&self, channel_id: u64, files: It, map: JsonMap) -> Result<Message>
         where T: Into<AttachmentType<'a>> {
         let uri = api!("/channels/{}/messages", channel_id);
@@ -1527,7 +1537,6 @@ impl Http {
                         .part(file_num.to_string(), Part::bytes(picture)
                             .file_name(filename.to_string()));
                 },
-                AttachmentType::__Nonexhaustive => unreachable!(),
             }
 
             unsafe {
@@ -1556,7 +1565,7 @@ impl Http {
             .await?;
 
         if !response.status().is_success() {
-            return Err(HttpError::from_response(response).await)?;
+            return Err(HttpError::from_response(response).await.into());
         }
 
         response
@@ -1638,6 +1647,48 @@ impl Http {
             headers: None,
             route: RouteInfo::StartIntegrationSync { guild_id, integration_id },
         }).await
+    }
+
+    /// Starts typing in the specified [`Channel`] for an indefinite period of time.
+    ///
+    /// Returns [`Typing`] that is used to trigger the typing. [`Typing::stop`] must be called
+    /// on the returned struct to stop typing. Note that on some clients, typing may persist
+    /// for a few seconds after `stop` is called.
+    /// Typing is also stopped when the struct is dropped.
+    ///
+    /// If a message is sent while typing is triggered, the user will stop typing for a brief period
+    /// of time and then resume again until either `stop` is called or the struct is dropped.
+    ///
+    /// This should rarely be used for bots, although it is a good indicator that a
+    /// long-running command is still being processed.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,no_run
+    /// # use serenity::{http::{Http, Typing}, Result};
+    /// # use std::sync::Arc;
+    /// #
+    /// # fn long_process() {}
+    /// # fn main() -> Result<()> {
+    /// # let http = Arc::new(Http::default());
+    /// // Initiate typing (assuming http is `Arc<Http>`)
+    /// let typing = http.start_typing(7)?;
+    ///
+    /// // Run some long-running process
+    /// long_process();
+    ///
+    /// // Stop typing
+    /// typing.stop();
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Channel`]: ../../model/channel/enum.Channel.html
+    /// [`Typing`]: ../typing/struct.Typing.html
+    /// [`Typing::stop`]: ../typing/struct.Typing.html#method.stop
+    pub fn start_typing(self: &Arc<Self>, channel_id: u64) -> Result<Typing> {
+        Typing::start(self.clone(), channel_id)
     }
 
     /// Unpins a message from a channel.
@@ -1737,6 +1788,7 @@ impl Http {
     /// ```
     ///
     /// [`fire`]: fn.fire.html
+    #[instrument]
     pub async fn request(&self, req: Request<'_>) -> Result<ReqwestResponse> {
         let ratelimiting_req = RatelimitedRequest::from(req);
         let response = self

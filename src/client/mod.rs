@@ -60,7 +60,7 @@ use std::{
 };
 #[cfg(all(feature = "cache", feature = "gateway"))]
 use std::time::Duration;
-use log::{error, debug, info};
+use tracing::{error, debug, info, instrument};
 
 #[cfg(feature = "framework")]
 use crate::framework::Framework;
@@ -131,6 +131,7 @@ impl<'a> ClientBuilder<'a> {
     /// A `TypeMap` must not be constructed manually: [`type_map_insert`]
     /// can be used to insert one type at a time.
     ///
+    /// [`type_map_insert`]: #method.type_map_insert
     /// [`TypeMap`]: ../utils/struct.TypeMap.html
     pub fn type_map(mut self, type_map: TypeMap) -> Self {
         self.data = Some(type_map);
@@ -269,6 +270,7 @@ impl<'a> ClientBuilder<'a> {
 impl<'a> Future for ClientBuilder<'a> {
     type Output = Result<Client>;
 
+    #[instrument(skip(self))]
     fn poll(mut self: Pin<&mut Self>, ctx: &mut FutContext<'_>) -> Poll<Self::Output> {
         if self.fut.is_none() {
             let data = Arc::new(RwLock::new(self.data.take().unwrap()));
@@ -293,7 +295,6 @@ impl<'a> Future for ClientBuilder<'a> {
                 #[cfg(feature = "cache")]
                 update_cache_timeout: self.timeout.take(),
                 http: Arc::clone(&http),
-                __nonexhaustive: (),
             });
 
             self.fut = Some(Box::pin(async move {
@@ -370,7 +371,7 @@ impl<'a> Future for ClientBuilder<'a> {
 /// }
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut client = Client::new("my token here").event_handler(Handler).await?;
+/// let mut client = Client::builder("my token here").event_handler(Handler).await?;
 ///
 /// client.start().await?;
 /// #   Ok(())
@@ -378,9 +379,9 @@ impl<'a> Future for ClientBuilder<'a> {
 /// ```
 ///
 /// [`Shard`]: ../gateway/struct.Shard.html
-/// [`EventHandler::message`]: trait.EventHandler.html#tymethod.message
+/// [`EventHandler::message`]: trait.EventHandler.html#method.message
 /// [`Event::MessageCreate`]: ../model/event/enum.Event.html#variant.MessageCreate
-/// [sharding docs]: ../index.html#sharding
+/// [sharding docs]: ../gateway/index.html#sharding
 #[cfg(feature = "gateway")]
 pub struct Client {
     /// A TypeMap which requires types to be Send + Sync. This is a map that
@@ -404,7 +405,7 @@ pub struct Client {
     /// - [`Event::MessageDeleteBulk`]
     /// - [`Event::MessageUpdate`]
     ///
-     /// ```rust,ignore
+    /// ```rust,ignore
     /// use serenity::prelude::*;
     /// use serenity::model::prelude::*;
     /// use std::collections::HashMap;
@@ -450,7 +451,7 @@ pub struct Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     /// {
     ///     let mut data = client.data.write().await;
     ///     data.insert::<MessageEventCounter>(HashMap::default());
@@ -497,7 +498,7 @@ pub struct Client {
     /// impl EventHandler for Handler { }
     ///
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// let shard_manager = client.shard_manager.clone();
     ///
@@ -526,7 +527,7 @@ pub struct Client {
     /// impl EventHandler for Handler { }
     ///
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// // Create a clone of the `Arc` containing the shard manager.
     /// let shard_manager = client.shard_manager.clone();
@@ -575,7 +576,13 @@ impl Client {
     ///
     /// [`Client`]: #struct.Client.html
     /// [`Future`]: https://doc.rust-lang.org/std/future/trait.Future.html
+    #[deprecated(since="0.9.0", note="please use `builder` instead")]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<'a>(token: impl AsRef<str>) -> ClientBuilder<'a> {
+        Self::builder(token)
+    }
+
+    pub fn builder<'a>(token: impl AsRef<str>) -> ClientBuilder<'a> {
         ClientBuilder::new(token)
     }
 
@@ -606,7 +613,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start().await {
     ///     println!("Err with client: {:?}", why);
@@ -616,6 +623,8 @@ impl Client {
     /// ```
     ///
     /// [gateway docs]: ../gateway/index.html#sharding
+
+    #[instrument(skip(self))]
     pub async fn start(&mut self) -> Result<()> {
         self.start_connection([0, 0, 1]).await
     }
@@ -647,7 +656,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start_autosharded().await {
     ///     println!("Err with client: {:?}", why);
@@ -663,6 +672,7 @@ impl Client {
     ///
     /// [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
     /// [gateway docs]: ../gateway/index.html#sharding
+    #[instrument(skip(self))]
     pub async fn start_autosharded(&mut self) -> Result<()> {
         let (x, y) = {
             let res = self.cache_and_http.http.get_bot_gateway().await?;
@@ -700,7 +710,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start_shard(3, 5).await {
     ///     println!("Err with client: {:?}", why);
@@ -723,7 +733,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start_shard(0, 1).await {
     ///     println!("Err with client: {:?}", why);
@@ -741,6 +751,7 @@ impl Client {
     /// [`start`]: #method.start
     /// [`start_autosharded`]: #method.start_autosharded
     /// [gateway docs]: ../gateway/index.html#sharding
+    #[instrument(skip(self))]
     pub async fn start_shard(&mut self, shard: u64, shards: u64) -> Result<()> {
         self.start_connection([shard, shard, shards]).await
     }
@@ -772,7 +783,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start_shards(8).await {
     ///     println!("Err with client: {:?}", why);
@@ -790,6 +801,7 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shard_range`]: #method.start_shard_range
     /// [Gateway docs]: ../gateway/index.html#sharding
+    #[instrument(skip(self))]
     pub async fn start_shards(&mut self, total_shards: u64) -> Result<()> {
         self.start_connection([0, total_shards - 1, total_shards]).await
     }
@@ -822,7 +834,7 @@ impl Client {
     ///
     /// # async fn run() -> Result<(), Box<dyn Error>> {
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// if let Err(why) = client.start_shard_range([4, 7], 10).await {
     ///     println!("Err with client: {:?}", why);
@@ -841,23 +853,25 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shards`]: #method.start_shards
     /// [Gateway docs]: ../gateway/index.html#sharding
+    #[instrument(skip(self))]
     pub async fn start_shard_range(&mut self, range: [u64; 2], total_shards: u64) -> Result<()> {
         self.start_connection([range[0], range[1], total_shards]).await
     }
 
-    // Shard data layout is:
-    // 0: first shard number to initialize
-    // 1: shard number to initialize up to and including
-    // 2: total number of shards the bot is sharding for
-    //
-    // Not all shards need to be initialized in this process.
-    //
-    // # Errors
-    //
-    // Returns a [`ClientError::Shutdown`] when all shards have shutdown due to
-    // an error.
-    //
-    // [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
+    /// Shard data layout is:
+    /// 0: first shard number to initialize
+    /// 1: shard number to initialize up to and including
+    /// 2: total number of shards the bot is sharding for
+    ///
+    /// Not all shards need to be initialized in this process.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ClientError::Shutdown`] when all shards have shutdown due to
+    /// an error.
+    ///
+    /// [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
+    #[instrument(skip(self))]
     async fn start_connection(&mut self, shard_data: [u64; 3]) -> Result<()> {
         #[cfg(feature = "voice")]
         self.voice_manager.lock().await.set_shard_count(shard_data[2]);

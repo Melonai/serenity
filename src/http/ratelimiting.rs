@@ -47,6 +47,7 @@ use crate::internal::prelude::*;
 use tokio::sync::{Mutex, RwLock};
 use std::{
     collections::HashMap,
+    fmt,
     sync::Arc,
     str::{
         self,
@@ -58,7 +59,7 @@ use std::{
 };
 use tokio::time::{delay_for, Duration};
 use super::{HttpError, Request};
-use log::debug;
+use tracing::{debug, instrument};
 
 /// Ratelimiter for requests to the Discord API.
 ///
@@ -75,6 +76,10 @@ use log::debug;
 /// regardless of route. The value of this global ratelimit is never given
 /// through the API, so it can't be pre-emptively ratelimited. This only affects
 /// the largest of bots.
+///
+/// [`limit`]: struct.Ratelimit.html#method.limit
+/// [`remaining`]: struct.Ratelimit.html#method.remaining
+/// [`reset`]: struct.Ratelimit.html#method.reset
 pub struct Ratelimiter {
     client: Arc<Client>,
     global: Arc<Mutex<()>>,
@@ -82,6 +87,16 @@ pub struct Ratelimiter {
     // when the 'reset' passes.
     routes: Arc<RwLock<HashMap<Route, Arc<Mutex<Ratelimit>>>>>,
     token: String,
+}
+
+impl fmt::Debug for Ratelimiter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ratelimiter")
+            .field("client", &self.client)
+            .field("global", &self.global)
+            .field("routes", &self.routes)
+            .finish()
+    }
 }
 
 impl Ratelimiter {
@@ -137,6 +152,7 @@ impl Ratelimiter {
         Arc::clone(&self.routes)
     }
 
+    #[instrument]
     pub async fn perform(&self, req: RatelimitedRequest<'_>) -> Result<Response> {
         let RatelimitedRequest { req } = req;
 
@@ -251,6 +267,7 @@ impl Ratelimit {
         self.reset_after
     }
 
+    #[instrument]
     pub async fn pre_hook(&mut self, route: &Route) {
         if self.limit() == 0 {
             return;
@@ -282,6 +299,7 @@ impl Ratelimit {
         self.remaining -= 1;
     }
 
+    #[instrument]
     pub async fn post_hook(&mut self, response: &Response, route: &Route) -> Result<bool> {
         if let Some(limit) = parse_header(&response.headers(), "x-ratelimit-limit")? {
             self.limit = limit;
@@ -353,6 +371,7 @@ impl Default for Ratelimit {
 /// perform a full cycle of making the request and returning the response.
 ///
 /// Use the `From` implementations for making one of these.
+#[derive(Debug)]
 pub struct RatelimitedRequest<'a> {
     req: Request<'a>,
 }

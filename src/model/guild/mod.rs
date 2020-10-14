@@ -33,7 +33,7 @@ use crate::builder::{CreateChannel, EditGuild, EditMember, EditRole};
 #[cfg(feature = "model")]
 use crate::constants::LARGE_THRESHOLD;
 #[cfg(feature = "model")]
-use log::{error, warn};
+use tracing::{error, warn};
 #[cfg(feature = "model")]
 use crate::http::{Http, CacheHttp};
 
@@ -79,6 +79,18 @@ pub struct Guild {
     /// - `VANITY_URL`
     /// - `VERIFIED`
     /// - `VIP_REGIONS`
+    /// - `PARTNERED`
+    /// - `MORE_EMOJI`
+    /// - `DISCOVERABLE`
+    /// - `FEATURABLE`
+    /// - `COMMERCE`
+    /// - `PUBLIC`
+    /// - `NEWS`
+    /// - `BANNER`
+    /// - `ANIMATED_ICON`
+    /// - `PUBLIC_DISABLED`
+    /// - `COMMUNITY`
+    /// - `WELCOME_SCREEN_ENABLED`
     ///
     /// [Discord Partnership]: https://discord.com/partners
     pub features: Vec<String>,
@@ -180,7 +192,7 @@ impl Guild {
     /// Returns the "default" channel of the guild for the passed user id.
     /// (This returns the first channel that can be read by the user, if there isn't one,
     /// returns `None`)
-    pub async fn default_channel<'a>(&'a self, uid: UserId) -> Option<&'a GuildChannel> {
+    pub async fn default_channel(&self, uid: UserId) -> Option<&GuildChannel> {
         for (cid, channel) in &self.channels {
             if self.user_permissions_in(*cid, uid).read_messages() {
                 return Some(channel);
@@ -195,7 +207,7 @@ impl Guild {
     /// returns `None`)
     /// Note however that this is very costy if used in a server with lots of channels,
     /// members, or both.
-    pub async fn default_channel_guaranteed<'a>(&'a self) -> Option<&'a GuildChannel> {
+    pub async fn default_channel_guaranteed(&self) -> Option<&GuildChannel> {
         for (cid, channel) in &self.channels {
             for memid in self.members.keys() {
                 if self.user_permissions_in(*cid, *memid).read_messages() {
@@ -1516,7 +1528,7 @@ impl Guild {
         self.id.prune_count(cache_http.http(), days).await
     }
 
-    fn remove_unusable_permissions(&self, permissions: &mut Permissions) {
+    pub(crate) fn remove_unusable_permissions(&self, permissions: &mut Permissions) {
         // No SEND_MESSAGES => no message-sending-related actions
         // If the member does not have the `SEND_MESSAGES` permission, then
         // throw out message-able permissions.
@@ -1715,7 +1727,7 @@ impl Guild {
     ///     }
     /// }
     ///
-    /// let mut client = Client::new("token").event_handler(Handler).await?;
+    /// let mut client = Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #    Ok(())
@@ -1968,13 +1980,12 @@ fn closest_to_origin(origin: &str, word_a: &str, word_b: &str) -> std::cmp::Orde
 /// a guild needs to be retrieved from the cache.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum GuildContainer {
     /// A guild which can have its contents directly searched.
     Guild(PartialGuild),
     /// A guild's id, which can be used to search the cache for a guild.
     Id(GuildId),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// Information relating to a guild's widget embed.
@@ -2060,13 +2071,12 @@ pub struct GuildUnavailable {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
 #[serde(untagged)]
 pub enum GuildStatus {
     OnlinePartialGuild(PartialGuild),
     OnlineGuild(Guild),
     Offline(GuildUnavailable),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 #[cfg(feature = "model")]
@@ -2079,20 +2089,18 @@ impl GuildStatus {
             GuildStatus::Offline(offline) => offline.id,
             GuildStatus::OnlineGuild(ref guild) => guild.id,
             GuildStatus::OnlinePartialGuild(ref partial_guild) => partial_guild.id,
-            GuildStatus::__Nonexhaustive => unreachable!(),
         }
     }
 }
 
 /// Default message notification level for a guild.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DefaultMessageNotificationLevel {
     /// Receive notifications for everything.
     All = 0,
     /// Receive only mentions.
     Mentions = 1,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 enum_number!(
@@ -2107,13 +2115,13 @@ impl DefaultMessageNotificationLevel {
         match self {
             DefaultMessageNotificationLevel::All => 0,
             DefaultMessageNotificationLevel::Mentions => 1,
-            DefaultMessageNotificationLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }
 
 /// Setting used to filter explicit messages from members.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum ExplicitContentFilter {
     /// Don't scan any messages.
     None = 0,
@@ -2121,8 +2129,6 @@ pub enum ExplicitContentFilter {
     WithoutRole = 1,
     /// Scan messages sent by all members.
     All = 2,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 enum_number!(
@@ -2139,20 +2145,18 @@ impl ExplicitContentFilter {
             ExplicitContentFilter::None => 0,
             ExplicitContentFilter::WithoutRole => 1,
             ExplicitContentFilter::All => 2,
-            ExplicitContentFilter::__Nonexhaustive => unreachable!(),
         }
     }
 }
 
 /// Multi-Factor Authentication level for guild moderators.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum MfaLevel {
     /// MFA is disabled.
     None = 0,
     /// MFA is enabled.
     Elevated = 1,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 enum_number!(
@@ -2167,13 +2171,13 @@ impl MfaLevel {
         match self {
             MfaLevel::None => 0,
             MfaLevel::Elevated => 1,
-            MfaLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }
 
 /// The name of a region that a voice server can be located in.
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize)]
+#[non_exhaustive]
 pub enum Region {
     #[serde(rename = "amsterdam")] Amsterdam,
     #[serde(rename = "brazil")] Brazil,
@@ -2193,8 +2197,6 @@ pub enum Region {
     #[serde(rename = "vip-amsterdam")] VipAmsterdam,
     #[serde(rename = "vip-us-east")] VipUsEast,
     #[serde(rename = "vip-us-west")] VipUsWest,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl Region {
@@ -2218,7 +2220,6 @@ impl Region {
             Region::VipAmsterdam => "vip-amsterdam",
             Region::VipUsEast => "vip-us-east",
             Region::VipUsWest => "vip-us-west",
-            Region::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -2228,6 +2229,7 @@ impl Region {
 
     [`Guild`]: struct.Guild.html"]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum VerificationLevel {
     /// Does not require any verification.
     None = 0,
@@ -2239,8 +2241,6 @@ pub enum VerificationLevel {
     High = 3,
     /// Must have a verified phone on the user's Discord account.
     Higher = 4,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 enum_number!(
@@ -2261,7 +2261,6 @@ impl VerificationLevel {
             VerificationLevel::Medium => 2,
             VerificationLevel::High => 3,
             VerificationLevel::Higher => 4,
-            VerificationLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }

@@ -53,7 +53,7 @@ use futures::{
 };
 use xsalsa20poly1305::{
     aead::{Aead, NewAead},
-    Key, Nonce, XSalsa20Poly1305, KEY_SIZE,
+    Nonce, XSalsa20Poly1305,
 };
 use async_tungstenite::tungstenite::protocol::Message;
 
@@ -61,7 +61,7 @@ use super::audio::{AudioReceiver, AudioType, HEADER_LEN, SAMPLE_RATE, DEFAULT_BI
 use super::connection_info::ConnectionInfo;
 use super::{payload, VoiceError, CRYPTO_MODE};
 use url::Url;
-use log::{debug, info, warn};
+use tracing::{debug, info, warn, instrument};
 
 #[cfg(all(feature = "rustls_backend", not(feature = "native_tls_backend")))]
 use crate::internal::ws_impl::create_rustls_client;
@@ -238,6 +238,7 @@ impl Connection {
         })
     }
 
+    #[instrument(skip(self))]
     pub async fn reconnect(&mut self) -> Result<()> {
         let url = generate_url(&mut self.connection_info.endpoint)?;
 
@@ -288,17 +289,19 @@ impl Connection {
 
         self.keepalive_timer = Timer::new((hello.heartbeat_interval as f64 * 0.75) as u64);
 
-        let (_, stream) = stream.split();
+        let (sink, stream) = stream.split();
         let (ws_close_sender, ws_task) = start_ws_task(stream, &self.task_items.tx).await?;
 
         self.task_items.ws_close_sender = ws_close_sender;
         self.task_items.ws_task = ws_task;
+        self.stream = sink;
 
         info!("[Voice] Reconnected to: {}", &self.connection_info.endpoint);
         Ok(())
     }
 
     #[inline]
+    #[instrument(skip(self, receiver, buffer))]
     async fn handle_received_udp(
         &mut self,
         receiver: &mut Option<Arc<dyn AudioReceiver>>,
@@ -360,6 +363,7 @@ impl Connection {
     }
 
     #[inline]
+    #[instrument(skip(self))]
     async fn check_audio_timer(&mut self) -> Result<()> {
         if self.audio_timer.check() {
             info!("[Voice] UDP keepalive");
@@ -373,6 +377,7 @@ impl Connection {
     }
 
     #[inline]
+    #[instrument(skip(self))]
     async fn check_keepalive_timer(&mut self) -> Result<()> {
         if self.keepalive_timer.check() {
             info!("[Voice] WS keepalive");
@@ -386,6 +391,7 @@ impl Connection {
     }
 
     #[inline]
+    #[instrument(skip(self, sources, buffer, mix_buffer))]
     async fn remove_unfinished_files(
         &mut self,
         sources: &mut Vec<LockedAudio>,
@@ -444,7 +450,6 @@ impl Connection {
                             None => 0,
                         }
                     },
-                    AudioType::__Nonexhaustive => unreachable!(),
                 };
 
                 // May need to force interleave/copy.
@@ -472,6 +477,7 @@ impl Connection {
     }
 
     #[allow(unused_variables)]
+    #[instrument(skip(self, sources, receiver))]
     pub async fn cycle(
         &mut self,
         mut sources: &mut Vec<LockedAudio>,
@@ -600,6 +606,7 @@ impl Connection {
         Ok(())
     }
 
+    #[instrument(skip(self, buffer))]
     fn prep_packet(&mut self,
                    packet: &mut [u8],
                    buffer: [f32; 1920],
@@ -644,6 +651,7 @@ impl Connection {
         Ok(HEADER_LEN + crypted.len())
     }
 
+    #[instrument(skip(self))]
     async fn set_speaking(&mut self, speaking: bool) -> Result<()> {
         if self.speaking == speaking {
             return Ok(());
@@ -697,6 +705,7 @@ fn generate_url(endpoint: &mut String) -> Result<Url> {
 }
 
 #[inline]
+#[instrument(skip(stream))]
 async fn init_cipher(stream: &mut WsStream) -> Result<XSalsa20Poly1305> {
     loop {
         let value = match stream.recv_json().await? {
@@ -710,14 +719,8 @@ async fn init_cipher(stream: &mut WsStream) -> Result<XSalsa20Poly1305> {
                     return Err(Error::Voice(VoiceError::VoiceModeInvalid));
                 }
 
-                // TODO: use `XSalsa20Poly1305::new_varkey`. See:
-                // <https://github.com/RustCrypto/traits/pull/191>
-                if desc.secret_key.len() == KEY_SIZE {
-                    let key = Key::from_slice(&desc.secret_key);
-                    return Ok(XSalsa20Poly1305::new(key));
-                } else {
-                    return Err(Error::Voice(VoiceError::KeyGen));
-                }
+                break XSalsa20Poly1305::new_varkey(&desc.secret_key)
+                    .map_err(|_| Error::Voice(VoiceError::KeyGen));
             },
             VoiceEvent::Unknown(op, value) => {
                 debug!(
@@ -740,6 +743,7 @@ where T: for<'a> PartialEq<&'a str>,
 }
 
 #[inline]
+#[instrument(skip(stream, udp))]
 async fn start_udp_task(stream: SplitStream<WsStream>, mut udp: RecvHalf) -> Result<TaskItems> {
     let (udp_close_sender, mut udp_close_reader) = unbounded();
     let (tx, rx) = unbounded();
@@ -785,6 +789,7 @@ async fn start_udp_task(stream: SplitStream<WsStream>, mut udp: RecvHalf) -> Res
 }
 
 #[inline]
+#[instrument(skip(stream, tx))]
 async fn start_ws_task(mut stream: SplitStream<WsStream>, tx: &Sender<ReceiverStatus>) -> Result<(Sender<i32>, JoinHandle<()>)> {
     let tx_ws = tx.clone();
     let (ws_close_sender, mut ws_close_reader) = unbounded();

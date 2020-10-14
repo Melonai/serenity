@@ -157,7 +157,7 @@ impl MessageBuilder {
     /// # use serde_json::json;
     /// # use serenity::model::guild::Role;
     /// #
-    /// # fn main() {
+    /// # {
     /// #
     /// use serenity::model::guild::Emoji;
     /// use serenity::model::id::EmojiId;
@@ -920,9 +920,8 @@ impl Display for MessageBuilder {
 /// Make a named link to Rust's GitHub organization:
 ///
 /// ```rust
-/// # #[cfg(feature = "utils")]
-/// # fn main() {
-/// #
+/// #[cfg(feature = "utils")]
+/// {
 /// use serenity::utils::{EmbedMessageBuilding, MessageBuilder};
 ///
 /// let msg = MessageBuilder::new()
@@ -930,10 +929,10 @@ impl Display for MessageBuilder {
 ///     .build();
 ///
 /// assert_eq!(msg, "[Rust's GitHub](https://github.com/rust-lang)");
-/// # }
-/// #
-/// # #[cfg(not(feature = "utils"))]
-/// # fn main() { }
+/// }
+///
+/// #[cfg(not(feature = "utils"))]
+/// {}
 /// ```
 ///
 /// [`MessageBuilder`]: struct.MessageBuilder.html
@@ -947,9 +946,8 @@ pub trait EmbedMessageBuilding {
     /// Make a simple link to Rust's homepage for use in an embed:
     ///
     /// ```rust
-    /// # #[cfg(feature = "utils")]
-    /// # fn main() {
-    /// #
+    /// #[cfg(feature = "utils")]
+    /// {
     /// use serenity::utils::{EmbedMessageBuilding, MessageBuilder};
     ///
     /// let mut msg = MessageBuilder::new();
@@ -958,10 +956,10 @@ pub trait EmbedMessageBuilding {
     /// let content = msg.build();
     ///
     /// assert_eq!(content, "Rust's website: [Homepage](https://rust-lang.org)");
-    /// # }
-    /// #
-    /// # #[cfg(not(feature = "utils"))]
-    /// # fn main() { }
+    /// }
+    ///
+    /// #[cfg(not(feature = "utils"))]
+    /// {}
     /// ```
     fn push_named_link<T: I, U: I>(&mut self, name: T, url: U) -> &mut Self;
 
@@ -973,9 +971,8 @@ pub trait EmbedMessageBuilding {
     /// # Examples
     ///
     /// ```rust
-    /// # #[cfg(feature = "utils")]
-    /// # fn main() {
-    /// #
+    /// #[cfg(feature = "utils")]
+    /// {
     /// use serenity::utils::{EmbedMessageBuilding, MessageBuilder};
     ///
     /// let mut msg = MessageBuilder::new();
@@ -984,10 +981,10 @@ pub trait EmbedMessageBuilding {
     /// let content = msg.build();
     ///
     /// assert_eq!(content, "A weird website name: [Try to   break links ( (](https://rust-lang.org)");
-    /// # }
-    /// #
-    /// # #[cfg(not(feature = "utils"))]
-    /// # fn main() { }
+    /// }
+    ///
+    /// #[cfg(not(feature = "utils"))]
+    /// {}
     /// ```
     ///
     /// [`push_named_link`]: #tymethod.push_named_link
@@ -1037,6 +1034,7 @@ impl EmbedMessageBuilding for MessageBuilder {
 /// use serenity::utils::Content;
 /// let content: Content = Bold + Italic + "text";
 /// ```
+#[non_exhaustive]
 pub enum ContentModifier {
     Italic,
     Bold,
@@ -1044,8 +1042,6 @@ pub enum ContentModifier {
     Code,
     Underline,
     Spoiler,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// Describes formatting on string content
@@ -1132,10 +1128,10 @@ impl Content {
             ContentModifier::Spoiler => {
                 self.spoiler = true;
             },
-            ContentModifier::__Nonexhaustive => unreachable!(),
         }
     }
 
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         trait UnwrapWith {
             fn unwrap_with(&self, n: usize) -> usize;

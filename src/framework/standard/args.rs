@@ -7,13 +7,12 @@ use std::borrow::Cow;
 
 /// Defines how an operation on an `Args` method failed.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error<E> {
     /// "END-OF-STRING". We reached the end. There's nothing to parse anymore.
     Eos,
     /// Parsing operation failed. Contains how it did.
     Parse(E),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl<E> From<E> for Error<E> {
@@ -29,7 +28,6 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
         match *self {
             Eos => write!(f, "ArgError(\"end of string\")"),
             Parse(ref e) => write!(f, "ArgError(\"{}\")", e),
-            __Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -314,6 +312,11 @@ impl Args {
             let mut stream = Stream::new(message);
 
             while let Some(token) = lex(&mut stream, &delims) {
+                // Ignore empty arguments.
+                if message[token.span.0..token.span.1].is_empty() {
+                    continue;
+                }
+
                 args.push(token);
             }
 
@@ -569,7 +572,7 @@ impl Args {
     /// Parse the current argument and advance.
     ///
     /// Shorthand for calling [`parse`], storing the result,
-    /// calling [`next`] and returning the result.
+    /// calling [`advance`] and returning the result.
     ///
     /// # Examples
     ///
@@ -586,7 +589,7 @@ impl Args {
     /// ```
     ///
     /// [`parse`]: #method.parse
-    /// [`next`]: #method.next
+    /// [`advance`]: #method.advance
     #[inline]
     pub fn single<T: FromStr>(&mut self) -> Result<T, T::Err> {
         let p = self.parse::<T>()?;

@@ -4,6 +4,7 @@ use crate::model::prelude::*;
 use std::fmt::Write as FmtWrite;
 #[cfg(feature = "model")]
 use crate::builder::{
+    CreateInvite,
     CreateMessage,
     EditChannel,
     EditMessage,
@@ -13,12 +14,14 @@ use crate::builder::{
 use crate::cache::Cache;
 #[cfg(feature = "model")]
 use crate::http::AttachmentType;
-#[cfg(feature = "model")]
+#[cfg(all(feature = "model", feature = "utils"))]
 use crate::utils;
 #[cfg(feature = "model")]
-use crate::http::{Http, CacheHttp};
+use crate::http::{Http, CacheHttp, Typing};
 #[cfg(feature = "model")]
 use serde_json::json;
+#[cfg(feature = "model")]
+use std::sync::Arc;
 use futures::stream::Stream;
 #[cfg(feature = "collector")]
 use crate::client::bridge::gateway::ShardMessenger;
@@ -58,6 +61,20 @@ impl ChannelId {
         http.as_ref().broadcast_typing(self.0).await
     }
 
+    /// Creates an invite leading to the given channel.
+    #[cfg(feature = "utils")]
+    pub async fn create_invite<F>(&self, http: impl AsRef<Http>, f: F) -> Result<RichInvite>
+    where
+        F: FnOnce(&mut CreateInvite) -> &mut CreateInvite
+    {
+        let mut invite = CreateInvite::default();
+        f(&mut invite);
+
+        let map = utils::hashmap_to_json_map(invite.0);
+
+        http.as_ref().create_invite(self.0, &map).await
+    }
+
     /// Creates a [permission overwrite][`PermissionOverwrite`] for either a
     /// single [`Member`] or [`Role`] within the channel.
     ///
@@ -75,7 +92,6 @@ impl ChannelId {
         let (id, kind) = match target.kind {
             PermissionOverwriteType::Member(id) => (id.0, "member"),
             PermissionOverwriteType::Role(id) => (id.0, "role"),
-            PermissionOverwriteType::__Nonexhaustive => unreachable!(),
         };
 
         let map = json!({
@@ -133,8 +149,7 @@ impl ChannelId {
 
     /// Deletes all messages by Ids from the given vector in the given channel.
     ///
-    /// Refer to the documentation for [`Channel::delete_messages`] for more
-    /// information.
+    /// The minimum amount of messages is 2 and the maximum amount is 100.
     ///
     /// Requires the [Manage Messages] permission.
     ///
@@ -146,7 +161,6 @@ impl ChannelId {
     /// Returns [`ModelError::BulkDeleteAmount`] if an attempt was made to
     /// delete either 0 or more than 100 messages.
     ///
-    /// [`Channel::delete_messages`]: ../channel/enum.Channel.html#method.delete_messages
     /// [`ModelError::BulkDeleteAmount`]: ../error/enum.Error.html#variant.BulkDeleteAmount
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
     pub async fn delete_messages<T, It>(self, http: impl AsRef<Http>, message_ids: It) -> Result<()>
@@ -187,7 +201,6 @@ impl ChannelId {
             match permission_type {
                 PermissionOverwriteType::Member(id) => id.0,
                 PermissionOverwriteType::Role(id) => id.0,
-                PermissionOverwriteType::__Nonexhaustive => unreachable!(),
             },
         ).await
     }
@@ -459,7 +472,6 @@ impl ChannelId {
             Channel::Guild(channel) => channel.name().to_string(),
             Channel::Category(category) => category.name().to_string(),
             Channel::Private(channel) => channel.name(),
-            Channel::__Nonexhaustive => unreachable!(),
         })
     }
 
@@ -482,11 +494,15 @@ impl ChannelId {
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].
     ///
-    /// Refer to [`Channel::reaction_users`] for more information.
+    /// The default `limit` is `50` - specify otherwise to receive a different
+    /// maximum number of users. The maximum that may be retrieve at a time is
+    /// `100`, if a greater number is provided then it is automatically reduced.
+    ///
+    /// The optional `after` attribute is to retrieve the users after a certain
+    /// user. This is useful for pagination.
     ///
     /// **Note**: Requires the [Read Message History] permission.
     ///
-    /// [`Channel::reaction_users`]: ../channel/enum.Channel.html#method.reaction_users
     /// [`Emoji`]: ../guild/struct.Emoji.html
     /// [`Message`]: ../channel/struct.Message.html
     /// [`User`]: ../user/struct.User.html
@@ -586,15 +602,15 @@ impl ChannelId {
     /// # Errors
     ///
     /// If the content of the message is over the above limit, then a
-    /// [`ClientError::MessageTooLong`] will be returned, containing the number
+    /// [`ModelError::MessageTooLong`] will be returned, containing the number
     /// of unicode code points over the limit.
     ///
     /// Returns an
-    /// [`HttpError::InvalidRequest(PayloadTooLarge)`][`HttpError::InvalidRequest`]
+    /// [`HttpError::UnsuccessfulRequest(ErrorResponse)`][`HttpError::UnsuccessfulRequest`]
     /// if the file is too large to send.
     ///
-    /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
-    /// [`HttpError::InvalidRequest`]: ../../http/enum.HttpError.html#variant.InvalidRequest
+    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
+    /// [`HttpError::UnsuccessfulRequest`]: ../../http/enum.HttpError.html#variant.UnsuccessfulRequest
     /// [`CreateMessage::content`]: ../../builder/struct.CreateMessage.html#method.content
     /// [`GuildChannel`]: struct.GuildChannel.html
     /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
@@ -675,6 +691,47 @@ impl ChannelId {
         }
 
         Ok(message)
+    }
+
+    /// Starts typing in the channel for an indefinite period of time.
+    ///
+    /// Returns [`Typing`] that is used to trigger the typing. [`Typing::stop`] must be called
+    /// on the returned struct to stop typing. Note that on some clients, typing may persist
+    /// for a few seconds after `stop` is called.
+    /// Typing is also stopped when the struct is dropped.
+    ///
+    /// If a message is sent while typing is triggered, the user will stop typing for a brief period
+    /// of time and then resume again until either `stop` is called or the struct is dropped.
+    ///
+    /// This should rarely be used for bots, although it is a good indicator that a
+    /// long-running command is still being processed.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,no_run
+    /// # use serenity::{http::{Http, Typing}, Result, model::id::ChannelId};
+    /// # use std::sync::Arc;
+    /// #
+    /// # fn long_process() {}
+    /// # fn main() -> Result<()> {
+    /// # let http = Arc::new(Http::default());
+    /// // Initiate typing (assuming http is `Arc<Http>`)
+    /// let typing = ChannelId(7).start_typing(&http)?;
+    ///
+    /// // Run some long-running process
+    /// long_process();
+    ///
+    /// // Stop typing
+    /// typing.stop();
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Typing`]: ../../http/typing/struct.Typing.html
+    /// [`Typing::stop`]: ../../http/typing/struct.Typing.html#method.stop
+    pub fn start_typing(self, http: &Arc<Http>) -> Result<Typing> {
+        http.start_typing(self.0)
     }
 
     /// Unpins a [`Message`] in the channel given by its Id.
@@ -766,7 +823,7 @@ pub struct MessagesIter<H: AsRef<Http>> {
     channel_id: ChannelId,
     http: H,
     buffer: Vec<Message>,
-    after: Option<MessageId>,
+    before: Option<MessageId>,
     tried_fetch: bool,
 }
 
@@ -777,7 +834,7 @@ impl<H: AsRef<Http>> MessagesIter<H> {
             channel_id,
             http,
             buffer: Vec::new(),
-            after: None,
+            before: None,
             tried_fetch: false,
         }
     }
@@ -786,33 +843,29 @@ impl<H: AsRef<Http>> MessagesIter<H> {
     ///
     /// This drops any messages that were currently in the buffer, so it should
     /// only be called when `self.buffer` is empty. Additionally, this updates
-    /// `self.after` so that the next call does not return duplicate items. 
+    /// `self.before` so that the next call does not return duplicate items.
     /// If there are no more messages to be fetched, then this marks
-    /// `self.after` as None, indicating that no more calls ought to be made.
+    /// `self.before` as None, indicating that no more calls ought to be made.
     ///
-    /// If this method is called with `self.after` as None, the first 100
+    /// If this method is called with `self.before` as None, the last 100
     /// (or lower) messages sent in the channel are added in the buffer.
     ///
     /// The messages are sorted such that the  newest message is the first
-    /// element of the buffer and the oldest message is the last.
+    /// element of the buffer and the newest message is the last.
     async fn refresh(&mut self) -> Result<()> {
         // Number of messages to fetch.
         let grab_size = 100;
 
-        // If `self.after` is not set yet, we can use the channel ID to fetch
-        // messages sent after the first message. It also includes the first
-        // message sent.
-        self.buffer = self.channel_id
-            .messages(&self.http, |b| 
-                b.after(self.after.map_or(self.channel_id.0, |m| m.0))
-                    .limit(grab_size)
-            )
-            .await?;
+        // If `self.before` is not set yet, we can use `.messages` to fetch
+        // the last message after very first fetch from last.
+        self.buffer = self.channel_id.messages(&self.http, |b| {
+            if let Some(before) = self.before {
+                b.before(before);
+            }
+            b.limit(grab_size)
+        }).await?;
 
-        // The messages received are in reverse order, that is, newest first
-        // and oldest last. Therefore, the "last" message is actually the first
-        // one in the buffer.
-        self.after = self.buffer.get(0)
+        self.before = self.buffer.get(0)
             .map(|message| message.id);
 
         self.tried_fetch = true;
@@ -826,7 +879,7 @@ impl<H: AsRef<Http>> MessagesIter<H> {
     /// A buffer of at most 100 messages is used to reduce the number of calls.
     /// necessary.
     ///
-    /// The stream returns the oldest message first, followed by newer messages.
+    /// The stream returns the newest message first, followed by older messages.
     ///
     /// # Examples
     ///
@@ -859,14 +912,13 @@ impl<H: AsRef<Http>> MessagesIter<H> {
         let init_state = MessagesIter::new(channel_id, http);
 
         futures::stream::unfold(init_state, |mut state| async {
-            if state.buffer.is_empty() && state.after.is_some() || !state.tried_fetch {
+            if state.buffer.is_empty() && state.before.is_some() || !state.tried_fetch {
                 if let Err(error) = state.refresh().await {
                     return Some((Err(error), state));
                 }
             }
 
-            // `pop()` returns the last element which is actually the "first"
-            // message. Thus, the resultant stream goes from oldest to newest.
+            // the resultant stream goes from newest to oldest.
             state.buffer.pop().map(|entry| (Ok(entry), state))
         })
     }

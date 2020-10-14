@@ -201,9 +201,15 @@ async fn main() {
     let (owners, bot_id) = match http.get_current_application_info().await {
         Ok(info) => {
             let mut owners = HashSet::new();
-            owners.insert(info.owner.id);
-
-            (owners, info.id)
+            if let Some(team) = info.team {
+                owners.insert(team.owner_user_id);
+            } else {
+                owners.insert(info.owner.id);
+            }
+            match http.get_current_user().await {
+                Ok(bot_id) => (owners, bot_id.id),
+                Err(why) => panic!("Could not access the bot id: {:?}", why),
+            }
         },
         Err(why) => panic!("Could not access application info: {:?}", why),
     };
@@ -258,7 +264,7 @@ async fn main() {
         .group(&MATH_GROUP)
         .group(&OWNER_GROUP);
 
-    let mut client = Client::new(&token)
+    let mut client = Client::builder(&token)
         .event_handler(Handler)
         .framework(framework)
         .await
@@ -287,7 +293,7 @@ async fn commands(ctx: &Context, msg: &Message) -> CommandResult {
     let counter = data.get::<CommandCounter>().expect("Expected CommandCounter in TypeMap.");
 
     for (k, v) in counter {
-        let _ = write!(contents, "- {name}: {amount}\n", name=k, amount=v);
+        writeln!(contents, "- {name}: {amount}", name=k, amount=v)?;
     }
 
     if let Err(why) = msg.channel_id.say(&ctx.http, &contents).await {

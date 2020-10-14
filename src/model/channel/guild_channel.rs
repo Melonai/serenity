@@ -1,6 +1,13 @@
 use chrono::{DateTime, Utc};
 use crate::model::prelude::*;
 
+use tokio::{
+    io::AsyncReadExt,
+    fs::File,
+};
+use reqwest::Url;
+use bytes::buf::Buf;
+
 #[cfg(feature = "cache")]
 use futures::stream::StreamExt;
 #[cfg(feature = "cache")]
@@ -34,7 +41,9 @@ use crate::collector::{
     CollectReply, MessageCollectorBuilder,
 };
 #[cfg(feature = "model")]
-use crate::http::{Http, CacheHttp};
+use crate::http::{Http, CacheHttp, Typing};
+#[cfg(feature = "model")]
+use std::sync::Arc;
 
 /// Represents a guild's text, news, or voice channel. Some methods are available
 /// only for voice channels and some are only available for text channels.
@@ -138,9 +147,12 @@ impl GuildChannel {
     /// ```rust,ignore
     /// let invite = channel.create_invite(&context, |i| i.max_uses(5)).await;
     /// ```
+    #[inline]
     #[cfg(feature = "utils")]
     pub async fn create_invite<F>(&self, cache_http: impl CacheHttp, f: F) -> Result<RichInvite>
-        where F: FnOnce(&mut CreateInvite) -> &mut CreateInvite {
+    where
+        F: FnOnce(&mut CreateInvite) -> &mut CreateInvite
+    {
         #[cfg(feature = "cache")]
         {
             if let Some(cache) = cache_http.cache() {
@@ -152,12 +164,7 @@ impl GuildChannel {
             }
         }
 
-        let mut invite = CreateInvite::default();
-        f(&mut invite);
-
-        let map = serenity_utils::hashmap_to_json_map(invite.0);
-
-        cache_http.http().create_invite(self.id.0, &map).await
+        self.id.create_invite(cache_http.http(), f).await
     }
 
     /// Creates a [permission overwrite][`PermissionOverwrite`] for either a
@@ -171,7 +178,7 @@ impl GuildChannel {
     /// # Examples
     ///
     /// Creating a permission overwrite for a member by specifying the
-    /// [`PermissionOverwrite::Member`] variant, allowing it the [Send Messages]
+    /// [`PermissionOverwriteType::Member`] variant, allowing it the [Send Messages]
     /// permission, but denying the [Send TTS Messages] and [Attach Files]
     /// permissions:
     ///
@@ -210,7 +217,7 @@ impl GuildChannel {
     /// ```
     ///
     /// Creating a permission overwrite for a role by specifying the
-    /// [`PermissionOverwrite::Role`] variant, allowing it the [Manage Webhooks]
+    /// [`PermissionOverwriteType::Role`] variant, allowing it the [Manage Webhooks]
     /// permission, but denying the [Send TTS Messages] and [Attach Files]
     /// permissions:
     ///
@@ -252,8 +259,8 @@ impl GuildChannel {
     /// [`Channel`]: enum.Channel.html
     /// [`Member`]: ../guild/struct.Member.html
     /// [`PermissionOverwrite`]: struct.PermissionOverwrite.html
-    /// [`PermissionOverwrite::Member`]: struct.PermissionOverwrite.html#variant.Member
-    /// [`PermissionOverwrite::Role`]: struct.PermissionOverwrite.html#variant.Role
+    /// [`PermissionOverwriteType::Member`]: struct.PermissionOverwriteType.html#variant.Member
+    /// [`PermissionOverwriteType::Role`]: struct.PermissionOverwriteType.html#variant.Role
     /// [`Role`]: ../guild/struct.Role.html
     /// [Attach Files]:
     /// ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
@@ -287,7 +294,7 @@ impl GuildChannel {
 
     /// Deletes all messages by Ids from the given vector in the channel.
     ///
-    /// Refer to [`Channel::delete_messages`] for more information.
+    /// The minimum amount of messages is 2 and the maximum amount is 100.
     ///
     /// Requires the [Manage Messages] permission.
     ///
@@ -299,7 +306,6 @@ impl GuildChannel {
     /// Returns [`ModelError::BulkDeleteAmount`] if an attempt was made to
     /// delete either 0 or more than 100 messages.
     ///
-    /// [`Channel::delete_messages`]: enum.Channel.html#method.delete_messages
     /// [`ModelError::BulkDeleteAmount`]: ../error/enum.Error.html#variant.BulkDeleteAmount
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
     #[inline]
@@ -495,7 +501,7 @@ impl GuildChannel {
     /// }
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
@@ -548,7 +554,7 @@ impl GuildChannel {
     /// }
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
@@ -617,11 +623,15 @@ impl GuildChannel {
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].
     ///
-    /// Refer to [`Channel::reaction_users`] for more information.
+    /// The default `limit` is `50` - specify otherwise to receive a different
+    /// maximum number of users. The maximum that may be retrieve at a time is
+    /// `100`, if a greater number is provided then it is automatically reduced.
+    ///
+    /// The optional `after` attribute is to retrieve the users after a certain
+    /// user. This is useful for pagination.
     ///
     /// **Note**: Requires the [Read Message History] permission.
     ///
-    /// [`Channel::reaction_users`]: enum.Channel.html#method.reaction_users
     /// [`Emoji`]: ../guild/struct.Emoji.html
     /// [`Message`]: struct.Message.html
     /// [`User`]: ../user/struct.User.html
@@ -663,11 +673,11 @@ impl GuildChannel {
     /// # Errors
     ///
     /// If the content of the message is over the above limit, then a
-    /// [`ClientError::MessageTooLong`] will be returned, containing the number
+    /// [`ModelError::MessageTooLong`] will be returned, containing the number
     /// of unicode code points over the limit.
     ///
     /// [`ChannelId::send_files`]: ../id/struct.ChannelId.html#method.send_files
-    /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
+    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
     /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
     #[inline]
@@ -710,6 +720,57 @@ impl GuildChannel {
         }
 
         self.id.send_message(&cache_http.http(), f).await
+    }
+
+    /// Starts typing in the channel for an indefinite period of time.
+    ///
+    /// Returns [`Typing`] that is used to trigger the typing. [`Typing::stop`] must be called
+    /// on the returned struct to stop typing. Note that on some clients, typing may persist
+    /// for a few seconds after `stop` is called.
+    /// Typing is also stopped when the struct is dropped.
+    ///
+    /// If a message is sent while typing is triggered, the user will stop typing for a brief period
+    /// of time and then resume again until either `stop` is called or the struct is dropped.
+    ///
+    /// This should rarely be used for bots, although it is a good indicator that a
+    /// long-running command is still being processed.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "cache")]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use serenity::{
+    /// #    cache::Cache,
+    /// #    http::{Http, Typing},
+    /// #    model::{ModelError, channel::GuildChannel, id::ChannelId},
+    /// #    Result,
+    /// # };
+    /// # use std::sync::Arc;
+    /// #
+    /// # fn long_process() {}
+    /// # let http = Arc::new(Http::default());
+    /// # let cache = Cache::default();
+    /// # let channel = cache
+    /// #    .guild_channel(ChannelId(7))
+    /// #    .await.ok_or(ModelError::ItemMissing)?;
+    /// // Initiate typing (assuming http is `Arc<Http>` and `channel` is bound)
+    /// let typing = channel.start_typing(&http)?;
+    ///
+    /// // Run some long-running process
+    /// long_process();
+    ///
+    /// // Stop typing
+    /// typing.stop();
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Typing`]: ../../http/typing/struct.Typing.html
+    /// [`Typing::stop`]: ../../http/typing/struct.Typing.html#method.stop
+    pub fn start_typing(self, http: &Arc<Http>) -> Result<Typing> {
+        http.start_typing(self.id.0)
     }
 
     /// Unpins a [`Message`] in the channel given by its Id.
@@ -816,6 +877,86 @@ impl GuildChannel {
     #[cfg(feature = "collector")]
     pub fn await_reactions<'a>(&self, shard_messenger: &'a impl AsRef<ShardMessenger>) -> ReactionCollectorBuilder<'a> {
         ReactionCollectorBuilder::new(shard_messenger).guild_id(self.id.0)
+    }
+
+    /// Sends a message with just the given message content in the channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ModelError::NameTooShort`] if the name of the webhook is
+    /// under the limit of 2 characters.
+    /// Returns a [`ModelError::NameTooLong`] if the name of the webhook is
+    /// over the limit of 100 characters.
+    /// Returns a [`ModelError::InvalidChannelType`] if the channel type is not text.
+    ///
+    /// [`ModelError::NameTooShort`]: ../error/enum.Error.html#variant.NameTooShort
+    /// [`ModelError::NameTooLong`]: ../error/enum.Error.html#variant.NameTooLong
+    /// [`ModelError::InvalidChannelType`]: ../error/enum.Error.html#variant.InvalidChannelType
+    pub async fn create_webhook(&self, http: impl AsRef<Http>, name: impl std::fmt::Display) -> Result<Webhook> {
+        let name = name.to_string();
+
+        if name.len() < 2 {
+            return Err(Error::Model(ModelError::NameTooShort))
+        } else if name.len() > 100 {
+            return Err(Error::Model(ModelError::NameTooLong))
+        } else if self.kind.num() != 0 {
+            return Err(Error::Model(ModelError::InvalidChannelType))
+        }
+
+        let map = serde_json::json!({
+            "name": name,
+        });
+
+        http.as_ref().create_webhook(self.id.0, &map).await
+    }
+
+    /// Avatar must be a 128x128 image.
+    pub async fn create_webhook_with_avatar<'a>(&self, http: impl AsRef<Http>, name: impl std::fmt::Display, avatar: impl Into<AttachmentType<'a>>) -> Result<Webhook> {
+        let name = name.to_string();
+        let avatar = avatar.into();
+
+        if name.len() < 2 {
+            return Err(Error::Model(ModelError::NameTooShort))
+        } else if name.len() > 100 {
+            return Err(Error::Model(ModelError::NameTooLong))
+        } else if self.kind.num() != 0 {
+            return Err(Error::Model(ModelError::InvalidChannelType))
+        }
+
+        let avatar = match avatar {
+            AttachmentType::Bytes{ data, filename: _ } => {
+                "data:image/png;base64,".to_string() + &base64::encode(&data.into_owned())
+            },
+            AttachmentType::File{ file, filename: _ } => {
+                let mut buf = Vec::new();
+                file.try_clone().await?.read_to_end(&mut buf).await?;
+
+                "data:image/png;base64,".to_string() + &base64::encode(&buf)
+            },
+            AttachmentType::Path(path) => {
+                let mut file = File::open(path).await?;
+                let mut buf = vec![];
+                file.read_to_end(&mut buf).await?;
+
+                "data:image/png;base64,".to_string() + &base64::encode(&buf)
+            },
+            AttachmentType::Image(url) => {
+                let url = Url::parse(url).map_err(|_| Error::Url(url.to_string()))?;
+                let response = http.as_ref().client.get(url).send().await?;
+                let mut bytes = response.bytes().await?;
+                let mut picture: Vec<u8> = vec![0; bytes.len()];
+                bytes.copy_to_slice(&mut picture[..]);
+
+                "data:image/png;base64,".to_string() + &base64::encode(&picture)
+            },
+        };
+
+        let map = serde_json::json!({
+            "name": name,
+            "avatar": avatar
+        });
+
+        http.as_ref().create_webhook(self.id.0, &map).await
     }
 }
 

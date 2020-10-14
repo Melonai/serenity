@@ -52,7 +52,7 @@ use super::Permissions;
 ///     }
 /// }
 /// let token = std::env::var("DISCORD_BOT_TOKEN")?;
-/// let mut client = Client::new(&token).event_handler(Handler).await?;
+/// let mut client = Client::builder(&token).event_handler(Handler).await?;
 ///
 /// client.start().await?;
 /// #     Ok(())
@@ -64,6 +64,7 @@ use super::Permissions;
 /// [`GuildId::ban`]: ../id/struct.GuildId.html#method.ban
 /// [`model`]: ../index.html
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// When attempting to delete below or above the minimum and maximum allowed
     /// number of messages.
@@ -85,7 +86,7 @@ pub enum Error {
     /// [Id][`RoleId`] in the [`Cache`].
     ///
     /// [`Role`]: ../guild/struct.Role.html
-    /// [`RoleId`]: ../id/struct.GuildId.html
+    /// [`RoleId`]: ../id/struct.RoleId.html
     /// [`Cache`]: ../../cache/struct.Cache.html
     RoleNotFound,
     /// Indicates that there are hierarchy problems restricting an action.
@@ -127,8 +128,10 @@ pub enum Error {
     ///
     /// [`ChannelType`]: ../channel/enum.ChannelType.html
     InvalidChannelType,
-    #[doc(hidden)]
-    __Nonexhaustive,
+    /// Indicates that the webhook name is under the 2 characters limit.
+    NameTooShort,
+    /// Indicates that the webhook name is over the 100 characters limit.
+    NameTooLong,
 }
 
 impl Display for Error {
@@ -146,7 +149,8 @@ impl Display for Error {
             Error::ItemMissing => f.write_str("The required item is missing from the cache."),
             Error::MessageTooLong(_) => f.write_str("Message too large."),
             Error::MessagingBot => f.write_str("Attempted to message another bot user."),
-            Error::__Nonexhaustive => unreachable!(),
+            Error::NameTooShort => f.write_str("Name is under the character limit."),
+            Error::NameTooLong => f.write_str("Name is over the character limit."),
         }
     }
 }

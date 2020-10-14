@@ -125,7 +125,7 @@ impl GuildId {
         // consider removing
         // `http.as_ref().get_channels(self.0)?()`:
         // `http.as_ref().get_channels(self.0)?`.
-        #[allow(clippy::identity_conversion)]
+        #[allow(clippy::useless_conversion)]
         for channel in http.as_ref().get_channels(self.0).await? {
             channels.insert(channel.id, channel);
         }
@@ -135,7 +135,7 @@ impl GuildId {
 
     /// Creates a [`GuildChannel`] in the the guild.
     ///
-    /// Refer to [`http::create_channel`] for more information.
+    /// Refer to [`Http::create_channel`] for more information.
     ///
     /// Requires the [Manage Channels] permission.
     ///
@@ -155,7 +155,7 @@ impl GuildId {
     /// ```
     ///
     /// [`GuildChannel`]: ../channel/struct.GuildChannel.html
-    /// [`http::create_channel`]: ../../http/fn.create_channel.html
+    /// [`Http::create_channel`]: ../../http/client/struct.Http.html#method.create_channel
     /// [Manage Channels]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
     #[inline]
     pub async fn create_channel(self, http: impl AsRef<Http>, f: impl FnOnce(&mut CreateChannel) -> &mut CreateChannel) -> Result<GuildChannel> {
@@ -545,6 +545,8 @@ impl GuildId {
     /// }
     /// # }
     /// ```
+    ///
+    /// [`members`]: #method.members
     #[cfg(feature = "cache")]
     pub fn members_iter<H: AsRef<Http>>(self, http: H) -> impl Stream<Item=Result<Member>> {
         MembersIter::<H>::stream(http, self)
@@ -575,7 +577,7 @@ impl GuildId {
     #[cfg(feature = "cache")]
     pub async fn name(self, cache: impl AsRef<Cache>) -> Option<String> {
         let guild = self.to_guild_cached(&cache).await?;
-        Some(guild.name.clone())
+        Some(guild.name)
     }
 
     /// Disconnects a member from a voice channel in the guild.
@@ -881,6 +883,8 @@ impl<H: AsRef<Http>> MembersIter<H> {
     /// }
     /// # }
     /// ```
+    ///
+    /// [`members`]: #method.members
     pub fn stream(http: impl AsRef<Http>, guild_id: GuildId) -> impl Stream<Item=Result<Member>> {
         let init_state = MembersIter::new(guild_id, http);
 

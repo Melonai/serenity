@@ -11,8 +11,8 @@ use std::{
 };
 use futures::channel::mpsc::{self, UnboundedReceiver as Receiver, UnboundedSender as Sender};
 use futures::{SinkExt, StreamExt};
-use super::super::super::dispatch::{DispatchEvent, dispatch};
-use super::super::super::{EventHandler, RawEventHandler};
+use crate::client::dispatch::{DispatchEvent, dispatch};
+use crate::client::{EventHandler, RawEventHandler};
 use super::event::{ClientEvent, ShardStageUpdateEvent};
 use super::{ShardClientMessage, ShardId, ShardManagerMessage, ShardRunnerMessage};
 use async_tungstenite::tungstenite::{
@@ -25,13 +25,13 @@ use typemap_rev::TypeMap;
 #[cfg(feature = "framework")]
 use crate::framework::Framework;
 #[cfg(feature = "voice")]
-use super::super::voice::ClientVoiceManager;
+use crate::client::bridge::voice::ClientVoiceManager;
 #[cfg(feature = "voice")]
 use tokio::sync::Mutex;
 #[cfg(feature = "collector")]
 use crate::collector::{MessageFilter, ReactionAction, ReactionFilter};
 
-use log::{error, debug, warn};
+use tracing::{trace, error, debug, warn, instrument};
 
 /// A runner for managing a [`Shard`] and its respective WebSocket client.
 ///
@@ -108,10 +108,12 @@ impl ShardRunner {
     /// [`Shard`]: ../../../gateway/struct.Shard.html
     /// [`ShardManager`]: struct.ShardManager.html
     /// [`ShardRunnerMessage`]: enum.ShardRunnerMessage.html
+    #[instrument(skip(self))]
     pub async fn run(&mut self) -> Result<()> {
-        debug!("[ShardRunner {:?}] Running", self.shard.shard_info());
+        warn!("[ShardRunner {:?}] Running", self.shard.shard_info());
 
         loop {
+            trace!("[ShardRunner {:?}] loop iteration started.", self.shard.shard_info());
             if !self.recv().await? {
                 return Ok(());
             }
@@ -164,6 +166,7 @@ impl ShardRunner {
             if !successful && !self.shard.stage().is_connecting() {
                 return self.request_restart().await;
             }
+            trace!("[ShardRunner {:?}] loop iteration reached the end.", self.shard.shard_info());
         }
     }
 
@@ -234,14 +237,13 @@ impl ShardRunner {
     /// # Errors
     ///
     /// Returns
+    #[instrument(skip(self, action))]
     async fn action(&mut self, action: &ShardAction) -> Result<()> {
         match *action {
             ShardAction::Reconnect(ReconnectType::Reidentify) => self.request_restart().await,
             ShardAction::Reconnect(ReconnectType::Resume) => self.shard.resume().await,
-            ShardAction::Reconnect(ReconnectType::__Nonexhaustive) => unreachable!(),
             ShardAction::Heartbeat => self.shard.heartbeat().await,
             ShardAction::Identify => self.shard.identify().await,
-            ShardAction::__Nonexhaustive => unreachable!(),
         }
     }
 
@@ -252,6 +254,7 @@ impl ShardRunner {
     // Returns whether the WebSocket client is still active.
     //
     // If true, the WebSocket client was _not_ shutdown. If false, it was.
+    #[instrument(skip(self))]
     async fn checked_shutdown(&mut self, id: ShardId, close_code: u16) -> bool {
         // First verify the ID so we know for certain this runner is
         // to shutdown.
@@ -265,7 +268,7 @@ impl ShardRunner {
         let _ = self.shard.client.close(Some(CloseFrame {
             code: close_code.into(),
             reason: Cow::from(""),
-        }));
+        })).await;
 
         // In return, we wait for either a Close Frame response, or an error, after which this WS is deemed
         // disconnected from Discord.
@@ -295,6 +298,7 @@ impl ShardRunner {
     }
 
     #[inline]
+    #[instrument(skip(self, event))]
     async fn dispatch(&self, event: DispatchEvent) {
         dispatch(
             event,
@@ -315,6 +319,7 @@ impl ShardRunner {
     //
     // This always returns true, except in the case that the shard manager asked
     // the runner to shutdown.
+    #[instrument(skip(self))]
     async fn handle_rx_value(&mut self, value: InterMessage) -> bool {
         match value {
             InterMessage::Client(value) => match *value {
@@ -420,11 +425,11 @@ impl ShardRunner {
                 // Value must be forwarded over the websocket
                 self.shard.client.send_json(&value).await.is_ok()
             },
-            InterMessage::__Nonexhaustive => unreachable!(),
         }
     }
 
     #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
     async fn handle_voice_event(&self, event: &Event) {
         match *event {
             Event::Ready(_) => {
@@ -466,6 +471,7 @@ impl ShardRunner {
     // should _never_ happen, as the sending half is kept on the runner.
 
     // Returns whether the shard runner is in a state that can continue.
+    #[instrument(skip(self))]
     async fn recv(&mut self) -> Result<bool> {
         loop {
             match self.runner_rx.try_next() {
@@ -495,6 +501,7 @@ impl ShardRunner {
 
     /// Returns a received event, as well as whether reading the potentially
     /// present event was successful.
+    #[instrument(skip(self))]
     async fn recv_event(&mut self) -> Result<(Option<Event>, Option<ShardAction>, bool)> {
         let gw_event = match self.shard.client.recv_json().await {
             Ok(Some(value)) => {
@@ -502,28 +509,6 @@ impl ShardRunner {
             },
             Ok(None) => Ok(None),
             Err(Error::Tungstenite(TungsteniteError::Io(_))) => {
-                // Check that an amount of time at least double the
-                // heartbeat_interval has passed.
-                //
-                // If not, continue on trying to receive messages.
-                //
-                // If it has, attempt to auto-reconnect.
-                {
-                    let last = self.shard.last_heartbeat_ack();
-                    let interval = self.shard.heartbeat_interval();
-
-                    if let (Some(last_heartbeat_ack), Some(interval)) = (last, interval) {
-                        let seconds_passed = last_heartbeat_ack.elapsed().as_secs();
-                        let interval_in_secs = interval / 1000;
-
-                        if seconds_passed <= interval_in_secs * 2 {
-                            return Ok((None, None, true));
-                        }
-                    } else {
-                        return Ok((None, None, true));
-                    }
-                }
-
                 debug!("Attempting to auto-reconnect");
 
                 match self.shard.reconnection_type() {
@@ -535,7 +520,6 @@ impl ShardRunner {
                             return Ok((None, None, false));
                         }
                     },
-                    ReconnectType::__Nonexhaustive => unreachable!(),
                 }
 
                 return Ok((None, None, true));
@@ -557,24 +541,24 @@ impl ShardRunner {
 
                 match why {
                     Error::Gateway(GatewayError::InvalidAuthentication) => {
-                        if let Err(_) = self.manager_tx.unbounded_send(
-                            ShardManagerMessage::ShardInvalidAuthentication) {
+                        if self.manager_tx.unbounded_send(
+                            ShardManagerMessage::ShardInvalidAuthentication).is_err() {
                             panic!("Failed sending InvalidAuthentication error to the shard manager.");
                         }
 
                         return Err(why);
                     },
                     Error::Gateway(GatewayError::InvalidGatewayIntents) => {
-                        if let Err(_) = self.manager_tx.unbounded_send(
-                            ShardManagerMessage::ShardInvalidGatewayIntents) {
+                        if self.manager_tx.unbounded_send(
+                            ShardManagerMessage::ShardInvalidGatewayIntents).is_err() {
                             panic!("Failed sending InvalidGatewayIntents error to the shard manager.");
                         }
 
                         return Err(why);
                     },
                     Error::Gateway(GatewayError::DisallowedGatewayIntents) => {
-                        if let Err(_) = self.manager_tx.unbounded_send(
-                            ShardManagerMessage::ShardDisallowedGatewayIntents) {
+                        if self.manager_tx.unbounded_send(
+                            ShardManagerMessage::ShardDisallowedGatewayIntents).is_err() {
                             panic!("Failed sending DisallowedGatewayIntents error to the shard manager.");
                         }
 
@@ -604,6 +588,7 @@ impl ShardRunner {
         Ok((event, action, true))
     }
 
+    #[instrument(skip(self))]
     async fn request_restart(&mut self) -> Result<()> {
         self.update_manager();
 
@@ -626,6 +611,7 @@ impl ShardRunner {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn update_manager(&self) {
         let _ = self.manager_tx.unbounded_send(ShardManagerMessage::ShardUpdate {
             id: ShardId(self.shard.shard_info()[0]),

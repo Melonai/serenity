@@ -1,8 +1,8 @@
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use super::{ShardManager, ShardManagerMessage};
-use super::super::gateway::ShardId;
-use log::{debug, warn};
+use crate::client::bridge::gateway::ShardId;
+use tracing::{debug, warn, instrument};
 use futures::{
     StreamExt,
     channel::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender},
@@ -30,15 +30,15 @@ pub enum ShardManagerError {
     /// Returned when a shard received an [`InvalidAuthentication`] error.
     /// An invalid token has been specified.
     ///
-    /// [`InvalidAuthentication`]: ../../../gateway/enum.Error.html#InvalidAuthentication
+    /// [`InvalidAuthentication`]: ../../../gateway/enum.GatewayError.html#variant.InvalidAuthentication
     InvalidToken,
     /// Returned when a shard received an [`InvalidGatewayIntents`] error.
     ///
-    /// [`InvalidGatewayIntents`]: ../../../gateway/enum.Error.html#InvalidGatewayIntents
+    /// [`InvalidGatewayIntents`]: ../../../gateway/enum.GatewayError.html#variant.InvalidGatewayIntents
     InvalidGatewayIntents,
     /// Returned when a shard received a [`DisallowedGatewayIntents`] error.
     ///
-    /// [`DisallowedGatewayIntents`]: ../../../gateway/enum.Error.html#DisallowedGatewayIntents
+    /// [`DisallowedGatewayIntents`]: ../../../gateway/enum.GatewayError.html#variant.DisallowedGatewayIntents
     DisallowedGatewayIntents,
 }
 
@@ -57,6 +57,7 @@ impl ShardManagerMonitor {
     /// channel (probably indicating that the shard manager should stop anyway)
     ///
     /// [`ShardManagerMessage::ShutdownAll`]: enum.ShardManagerMessage.html#variant.ShutdownAll
+    #[instrument(skip(self))]
     pub async fn run(&mut self) -> Result<()> {
         debug!("Starting shard manager worker");
 
@@ -76,7 +77,7 @@ impl ShardManagerMonitor {
                     }
                 }
                 ShardManagerMessage::Shutdown(shard_id, code) => {
-                    self.manager.lock().await.shutdown(shard_id, code);
+                    self.manager.lock().await.shutdown(shard_id, code).await;
                     let _  = self.shutdown.unbounded_send(shard_id);
                 },
                 ShardManagerMessage::ShutdownAll => {

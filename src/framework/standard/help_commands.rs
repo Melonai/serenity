@@ -79,7 +79,7 @@ use std::{
     ops::{Index, IndexMut},
 };
 #[cfg(all(feature = "cache", feature = "http"))]
-use log::warn;
+use tracing::warn;
 #[cfg(all(feature = "cache", feature = "http"))]
 use futures::future::{BoxFuture, FutureExt};
 
@@ -92,7 +92,6 @@ macro_rules! format_command_name {
             HelpBehaviour::Strike => format!("~~`{}`~~", $command_name),
             HelpBehaviour::Nothing => format!("`{}`", $command_name),
             HelpBehaviour::Hide => continue,
-            HelpBehaviour::__Nonexhaustive => unreachable!(),
         }
     };
 }
@@ -183,6 +182,7 @@ impl Suggestions {
 /// yields relevant data in customised textual
 /// representation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum CustomisedHelpData<'a> {
     /// To display suggested commands.
     SuggestedCommands {
@@ -198,8 +198,6 @@ pub enum CustomisedHelpData<'a> {
     SingleCommand { command: Command<'a> },
     /// To display failure in finding a fitting command.
     NoCommandFound { help_error_message: &'a str },
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// Wraps around a `Vec<Vec<T>>` and provides access
@@ -397,18 +395,16 @@ async fn check_command_behaviour(
 ) -> HelpBehaviour {
     let b = check_common_behaviour(&ctx, msg, &options, owners, help_options).await;
 
-    if b == HelpBehaviour::Nothing {
-        if !options.owner_privilege || !owners.contains(&msg.author.id) {
-            for check in group_checks.iter().chain(options.checks) {
-                if !check.check_in_help {
-                    continue;
-                }
+    if b == HelpBehaviour::Nothing && (!options.owner_privilege || !owners.contains(&msg.author.id)) {
+        for check in group_checks.iter().chain(options.checks) {
+            if !check.check_in_help {
+                continue;
+            }
 
-                let mut args = Args::new("", &[]);
+            let mut args = Args::new("", &[]);
 
-                if let CheckResult::Failure(_) = (check.function)(ctx, msg, &mut args, options).await {
-                    return help_options.lacking_conditions;
-                }
+            if let CheckResult::Failure(_) = (check.function)(ctx, msg, &mut args, options).await {
+                return help_options.lacking_conditions;
             }
         }
     }
@@ -1204,9 +1200,7 @@ async fn send_suggestion_embed(
     suggestions: &Suggestions,
     colour: Colour,
 ) -> Result<Message, Error> {
-    let text = help_description
-        .replace("{}", &suggestions.join("`, `"))
-        .to_string();
+    let text = help_description.replace("{}", &suggestions.join("`, `"));
 
     channel_id.send_message(&http, |m| {
         m.embed(|e| {
@@ -1316,7 +1310,6 @@ pub async fn with_embeds(
             &command,
             help_options.embed_success_colour,
         ).await,
-        CustomisedHelpData::__Nonexhaustive => unreachable!(),
     };
 
     match response_result {
@@ -1491,7 +1484,6 @@ pub async fn plain(
         CustomisedHelpData::SingleCommand { ref command } => {
             single_command_to_plain_string(&help_options, &command)
         },
-        CustomisedHelpData::__Nonexhaustive => unreachable!(),
     };
 
     match msg.channel_id.say(&ctx, result).await {

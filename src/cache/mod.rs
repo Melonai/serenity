@@ -47,6 +47,7 @@ use std::collections::{
 };
 use std::default::Default;
 use async_trait::async_trait;
+use tracing::instrument;
 
 mod cache_update;
 mod settings;
@@ -100,6 +101,7 @@ impl<F: FromStr> FromStrAndCache for F {
 /// [`Shard`]: ../gateway/struct.Shard.html
 /// [`http`]: ../http/index.html
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Cache {
     /// A map of channels in [`Guild`]s that the current user has received data
     /// for.
@@ -181,7 +183,6 @@ pub struct Cache {
     pub(crate) message_queue: RwLock<HashMap<ChannelId, VecDeque<MessageId>>>,
     /// The settings for the cache.
     settings: RwLock<Settings>,
-    __nonexhaustive: (),
 }
 
 impl Cache {
@@ -203,6 +204,7 @@ impl Cache {
     ///
     /// let cache = Cache::new_with_settings(settings);
     /// ```
+    #[instrument]
     pub fn new_with_settings(settings: Settings) -> Self {
         Self {
             settings: RwLock::new(settings),
@@ -248,7 +250,7 @@ impl Cache {
     ///     }
     /// }
     ///
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
@@ -330,12 +332,13 @@ impl Cache {
     /// [`Guild`]: ../model/guild/struct.Guild.html
     /// [`Shard`]: ../gateway/struct.Shard.html
     pub async fn guilds(&self) -> Vec<GuildId> {
+        let chain = self.unavailable_guilds.read().await.clone().into_iter();
         self.guilds
             .read()
             .await
             .keys()
             .cloned()
-            .chain(self.unavailable_guilds.read().await.clone().into_iter())
+            .chain(chain)
             .collect()
     }
 
@@ -376,9 +379,9 @@ impl Cache {
 
     /// Clones an entire guild from the cache based on the given `id`.
     ///
-    /// In order to clone only a field of the guild, use [`guild_field´].
+    /// In order to clone only a field of the guild, use [`guild_field`].
     ///
-    /// [`guild_field`]: ../model/id/struct.GuildId.html
+    /// [`guild_field`]: #method.guild_field
     ///
     /// # Examples
     ///
@@ -432,7 +435,7 @@ impl Cache {
     async fn _guild_field<Ret, Fun>(&self, id: GuildId, field_accessor: Fun) -> Option<Ret>
     where Fun: FnOnce(&Guild) -> Ret {
         let guilds = self.guilds.read().await;
-        let guild = guilds.get(&id.into())?;
+        let guild = guilds.get(&id)?;
 
         Some(field_accessor(guild))
     }
@@ -479,7 +482,7 @@ impl Cache {
     ///
     /// # #[cfg(feature = "client")]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
@@ -528,7 +531,7 @@ impl Cache {
         field_selector: Fun) -> Option<Ret>
     where Fun: FnOnce(&GuildChannel) -> Ret {
         let guild_channels = &self.channels.read().await;
-        let channel = guild_channels.get(&id.into())?;
+        let channel = guild_channels.get(&id)?;
 
         Some(field_selector(channel))
     }
@@ -676,7 +679,7 @@ impl Cache {
     /// Returns the number of shards.
     #[inline]
     pub async fn shard_count(&self) -> u64 {
-        self.shard_count.read().await.clone()
+        *self.shard_count.read().await
     }
 
     /// Retrieves a [`Channel`]'s message from the cache based on the channel's and
@@ -921,7 +924,7 @@ impl Cache {
     where Fun: FnOnce(&CurrentUser) -> Ret {
         let user = self.user.read().await;
 
-        field_selector(&user).clone()
+        field_selector(&user)
     }
 
     /// Updates the cache with the update implementation for an event or other
@@ -935,6 +938,7 @@ impl Cache {
     ///
     /// [`CacheUpdate`]: trait.CacheUpdate.html
     /// [`CacheUpdate` examples]: trait.CacheUpdate.html#examples
+    #[instrument(skip(self, e))]
     pub async fn update<E: CacheUpdate>(&self, e: &mut E) -> Option<E::Output> {
         e.update(self).await
     }
@@ -966,7 +970,6 @@ impl Default for Cache {
             user: RwLock::new(CurrentUser::default()),
             users: RwLock::new(HashMap::default()),
             message_queue: RwLock::new(HashMap::default()),
-            __nonexhaustive: (),
         }
     }
 }
@@ -975,9 +978,7 @@ impl Default for Cache {
 mod test {
     use chrono::{DateTime, Utc};
     use serde_json::{Number, Value};
-    use std::{
-        collections::HashMap,
-    };
+    use std::collections::HashMap;
     use crate::{
         cache::{Cache, CacheUpdate, Settings},
         model::prelude::*,
@@ -1017,7 +1018,7 @@ mod test {
                 member: None,
                 mention_everyone: false,
                 mention_roles: vec![],
-                mention_channels: None,
+                mention_channels: vec![],
                 mentions: vec![],
                 nonce: Value::Number(Number::from(1)),
                 pinned: false,

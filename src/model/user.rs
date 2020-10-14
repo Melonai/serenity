@@ -1,6 +1,5 @@
 //! User information-related models.
 
-use serde_json;
 use std::fmt;
 use super::utils::deserialize_u16;
 use super::prelude::*;
@@ -319,6 +318,7 @@ impl CurrentUser {
 ///
 /// [`name`]: #method.name
 #[derive(Copy, Clone, Debug, Deserialize, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize)]
+#[non_exhaustive]
 pub enum DefaultAvatar {
     /// The avatar when the result is `0`.
     #[serde(rename = "6debd47ed13483642cf09e832ed0bc1b")]
@@ -335,8 +335,6 @@ pub enum DefaultAvatar {
     /// The avatar when the result is `4`.
     #[serde(rename = "1cbd08c76f8af6dddce02c5138971129")]
     Red,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl DefaultAvatar {
@@ -354,14 +352,13 @@ impl DefaultAvatar {
 /// [`DoNotDisturb`]: #variant.DoNotDisturb
 /// [`Invisible`]: #variant.Invisible
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize)]
+#[non_exhaustive]
 pub enum OnlineStatus {
     #[serde(rename = "dnd")] DoNotDisturb,
     #[serde(rename = "idle")] Idle,
     #[serde(rename = "invisible")] Invisible,
     #[serde(rename = "offline")] Offline,
     #[serde(rename = "online")] Online,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl OnlineStatus {
@@ -372,7 +369,6 @@ impl OnlineStatus {
             OnlineStatus::Invisible => "invisible",
             OnlineStatus::Offline => "offline",
             OnlineStatus::Online => "online",
-            OnlineStatus::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -530,7 +526,7 @@ impl User {
     /// }
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     /// #     Ok(())
     /// # }
     /// # }
@@ -656,7 +652,6 @@ impl User {
                             .map(|m| m.roles.contains(&role))
                     }
                 },
-                GuildContainer::__Nonexhaustive => unreachable!(),
             }
         }.boxed()
     }
@@ -711,7 +706,7 @@ impl User {
     ///         }
     ///     }
     /// }
-    /// let mut client =Client::new("token").event_handler(Handler).await?;
+    /// let mut client =Client::builder("token").event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
@@ -738,7 +733,7 @@ impl User {
             }
         }
 
-        guild_id.member(cache_http, &self.id).await.ok().and_then(|member| member.nick.clone())
+        guild_id.member(cache_http, &self.id).await.ok().and_then(|member| member.nick)
     }
 
     /// Returns a future that will await one message by this user.

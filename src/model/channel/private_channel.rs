@@ -15,7 +15,9 @@ use crate::builder::{
 #[cfg(feature = "model")]
 use crate::http::AttachmentType;
 #[cfg(feature = "http")]
-use crate::http::Http;
+use crate::http::{Http, Typing};
+#[cfg(feature = "model")]
+use std::sync::Arc;
 
 /// A Direct Message text channel with another user.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,7 +89,7 @@ impl PrivateChannel {
 
     /// Deletes all messages by Ids from the given vector in the channel.
     ///
-    /// Refer to [`Channel::delete_messages`] for more information.
+    /// The minimum amount of messages is 2 and the maximum amount is 100.
     ///
     /// Requires the [Manage Messages] permission.
     ///
@@ -99,7 +101,6 @@ impl PrivateChannel {
     /// Returns [`ModelError::BulkDeleteAmount`] if an attempt was made to
     /// delete either 0 or more than 100 messages.
     ///
-    /// [`Channel::delete_messages`]: enum.Channel.html#method.delete_messages
     /// [`ModelError::BulkDeleteAmount`]: ../error/enum.Error.html#variant.BulkDeleteAmount
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
     #[inline]
@@ -212,11 +213,15 @@ impl PrivateChannel {
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].
     ///
-    /// Refer to [`Channel::reaction_users`] for more information.
+    /// The default `limit` is `50` - specify otherwise to receive a different
+    /// maximum number of users. The maximum that may be retrieve at a time is
+    /// `100`, if a greater number is provided then it is automatically reduced.
+    ///
+    /// The optional `after` attribute is to retrieve the users after a certain
+    /// user. This is useful for pagination.
     ///
     /// **Note**: Requires the [Read Message History] permission.
     ///
-    /// [`Channel::reaction_users`]: enum.Channel.html#method.reaction_users
     /// [`Emoji`]: ../guild/struct.Emoji.html
     /// [`Message`]: struct.Message.html
     /// [`User`]: ../user/struct.User.html
@@ -274,11 +279,11 @@ impl PrivateChannel {
     /// # Errors
     ///
     /// If the content of the message is over the above limit, then a
-    /// [`ClientError::MessageTooLong`] will be returned, containing the number
+    /// [`ModelError::MessageTooLong`] will be returned, containing the number
     /// of unicode code points over the limit.
     ///
     /// [`ChannelId::send_files`]: ../id/struct.ChannelId.html#method.send_files
-    /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
+    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
     /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
     #[inline]
@@ -308,6 +313,57 @@ impl PrivateChannel {
     where for <'b> F: FnOnce(&'b mut CreateMessage<'a>) -> &'b mut CreateMessage<'a>
     {
         self.id.send_message(&http, f).await
+    }
+
+    /// Starts typing in the channel for an indefinite period of time.
+    ///
+    /// Returns [`Typing`] that is used to trigger the typing. [`Typing::stop`] must be called
+    /// on the returned struct to stop typing. Note that on some clients, typing may persist
+    /// for a few seconds after `stop` is called.
+    /// Typing is also stopped when the struct is dropped.
+    ///
+    /// If a message is sent while typing is triggered, the user will stop typing for a brief period
+    /// of time and then resume again until either `stop` is called or the struct is dropped.
+    ///
+    /// This should rarely be used for bots, although it is a good indicator that a
+    /// long-running command is still being processed.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "cache")]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use serenity::{
+    /// #    cache::Cache,
+    /// #    http::{Http, Typing},
+    /// #    model::{ModelError, channel::PrivateChannel, id::ChannelId},
+    /// #    Result,
+    /// # };
+    /// # use std::sync::Arc;
+    /// #
+    /// # fn long_process() {}
+    /// # let http = Arc::new(Http::default());
+    /// # let cache = Cache::default();
+    /// # let channel = cache.private_channel(ChannelId(7))
+    /// #    .await
+    /// #    .ok_or(ModelError::ItemMissing)?;
+    /// // Initiate typing (assuming http is `Arc<Http>` and `channel` is bound)
+    /// let typing = channel.start_typing(&http)?;
+    ///
+    /// // Run some long-running process
+    /// long_process();
+    ///
+    /// // Stop typing
+    /// typing.stop();
+    /// #
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Typing`]: ../../http/typing/struct.Typing.html
+    /// [`Typing::stop`]: ../../http/typing/struct.Typing.html#method.stop
+    pub fn start_typing(self, http: &Arc<Http>) -> Result<Typing> {
+        http.start_typing(self.id.0)
     }
 
     /// Unpins a [`Message`] in the channel given by its Id.

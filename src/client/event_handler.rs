@@ -1,8 +1,6 @@
 use crate::model::prelude::*;
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-};
+use std::collections::HashMap;
 use super::context::Context;
 use crate::client::bridge::gateway::event::*;
 use async_trait::async_trait;
@@ -201,6 +199,16 @@ pub trait EventHandler: Send + Sync {
     /// Provides the guild's new, albeit partial data.
     #[cfg(not(feature = "cache"))]
     async fn guild_update(&self, _ctx: Context, _new_but_incomplete_data: PartialGuild) {}
+
+    /// Dispatched when a invite is created.
+    ///
+    /// Provides data about the invite.
+    async fn invite_create(&self, _ctx: Context, _data: InviteCreateEvent) {}
+
+    /// Dispatched when a invite is deleted.
+    ///
+    /// Provides data about the invite.
+    async fn invite_delete(&self, _ctx: Context, _data: InviteDeleteEvent) {}
 
     /// Dispatched when a message is created.
     ///

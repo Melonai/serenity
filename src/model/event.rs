@@ -7,8 +7,10 @@ use serde::ser::{
     SerializeSeq,
     Serializer
 };
-use serde_json;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt
+};
 use super::utils::{deserialize_emojis, deserialize_u64};
 use super::prelude::*;
 use crate::constants::{OpCode, VoiceOpCode};
@@ -91,12 +93,9 @@ impl CacheUpdate for ChannelCreateEvent {
                             channel.recipient.id
                     };
 
-                    cache
-                        .users
-                        .read()
-                        .await
-                        .get(&user_id)
-                        .map(|u| channel.recipient = u.clone());
+                    if let Some(u) = cache.users.read().await.get(&user_id) {
+                        channel.recipient = u.clone();
+                    }
 
                     channel.id
                 };
@@ -116,7 +115,6 @@ impl CacheUpdate for ChannelCreateEvent {
                     .insert(category.id, category.clone())
                     .map(Channel::Category)
             },
-            Channel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -163,7 +161,6 @@ impl CacheUpdate for ChannelDeleteEvent {
                 cache.private_channels.write().await.remove(&id);
             },
             Channel::Group(_) => {},
-            Channel::__Nonexhaustive => unreachable!(),
         };
 
         // Remove the cached messages for the channel.
@@ -246,23 +243,16 @@ impl CacheUpdate for ChannelUpdateEvent {
                     .map(|g| g.channels.insert(channel_id, channel.clone()));
             },
             Channel::Private(ref channel) => {
-                cache
-                    .private_channels
-                    .write()
-                    .await
-                    .get_mut(&channel.id)
-                    .map(|c| c.clone_from(channel));
+                if let Some(c) = cache.private_channels.write().await.get_mut(&channel.id) {
+                    c.clone_from(channel);
+                }
             },
             Channel::Category(ref category) => {
-                cache
-                    .categories
-                    .write()
-                    .await
-                    .get_mut(&category.id)
-                    .map(|c| c.clone_from(category));
+                if let Some(c) = cache.categories.write().await.get_mut(&category.id) {
+                    c.clone_from(category);
+                }
             },
             Channel::Group(_) => {},
-            Channel::__Nonexhaustive => unreachable!(),
         }
 
         None
@@ -318,7 +308,9 @@ impl CacheUpdate for GuildCreateEvent {
 
         for (user_id, member) in &mut guild.members {
             cache.update_user_entry(&member.user).await;
-            cache.user(user_id).await.map(|u| member.user = u);
+            if let Some(u) = cache.user(user_id).await {
+                member.user = u;
+            }
         }
 
         cache.channels.write().await.extend(guild.channels.clone().into_iter());
@@ -437,7 +429,9 @@ impl CacheUpdate for GuildMemberAddEvent {
     async fn update(&mut self, cache: &Cache) -> Option<()> {
         let user_id = self.member.user.id;
         cache.update_user_entry(&self.member.user).await;
-        cache.user(user_id).await.map(|u| self.member.user = u);
+        if let Some(u) = cache.user(user_id).await {
+            self.member.user = u;
+        }
 
         if let Some(guild) = cache.guilds.write().await.get_mut(&self.guild_id) {
             guild.member_count += 1;
@@ -581,10 +575,9 @@ impl CacheUpdate for GuildMembersChunkEvent {
             cache.update_user_entry(&member.user).await;
         }
 
-        cache
-            .guild(self.guild_id)
-            .await
-            .map(|mut g| g.members.extend(self.members.clone()));
+        if let Some(mut g) = cache.guild(self.guild_id).await {
+            g.members.extend(self.members.clone());
+        }
 
         None
     }
@@ -671,7 +664,7 @@ impl<'de> Deserialize<'de> for GuildRoleCreateEvent {
             .and_then(GuildId::deserialize)
             .map_err(DeError::custom)?;
 
-        let id = guild_id.as_u64().clone();
+        let id = *guild_id.as_u64();
 
         if let Some(value) = map.get_mut("role") {
             if let Some(role) = value.as_object_mut() {
@@ -749,7 +742,7 @@ impl<'de> Deserialize<'de> for GuildRoleUpdateEvent {
             .and_then(GuildId::deserialize)
             .map_err(DeError::custom)?;
 
-        let id = guild_id.as_u64().clone();
+        let id = *guild_id.as_u64();
 
         if let Some(value) = map.get_mut("role") {
             if let Some(role) = value.as_object_mut() {
@@ -768,6 +761,28 @@ impl<'de> Deserialize<'de> for GuildRoleUpdateEvent {
             _nonexhaustive: (),
         })
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InviteCreateEvent {
+    pub channel_id: ChannelId,
+    pub code: String,
+    pub guild_id: Option<GuildId>,
+    pub inviter: Option<User>,
+    pub max_age: u64,
+    pub max_uses: u64,
+    pub temporary: bool,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InviteDeleteEvent {
+    pub channel_id: ChannelId,
+    pub guild_id: Option<GuildId>,
+    pub code: String,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -999,7 +1014,9 @@ impl CacheUpdate for PresenceUpdateEvent {
 
         if let Some(user) = self.presence.user.as_mut() {
             cache.update_user_entry(&user).await;
-            cache.user(user_id).await.map(|u| *user = u);
+            if let Some(u) = cache.user(user_id).await {
+                *user = u;
+            }
         }
 
         if let Some(guild_id) = self.guild_id {
@@ -1202,7 +1219,6 @@ impl CacheUpdate for ReadyEvent {
                     cache.guilds.write().await.insert(guild.id, guild);
                 },
                 GuildStatus::OnlinePartialGuild(_) => {},
-                GuildStatus::__Nonexhaustive => unreachable!(),
             }
         }
 
@@ -1302,7 +1318,7 @@ impl Serialize for UserUpdateEvent {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct VoiceServerUpdateEvent {
     pub channel_id: Option<ChannelId>,
     pub endpoint: Option<String>,
@@ -1310,6 +1326,16 @@ pub struct VoiceServerUpdateEvent {
     pub token: String,
     #[serde(skip)]
     pub(crate) _nonexhaustive: (),
+}
+
+impl fmt::Debug for VoiceServerUpdateEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VoiceServerUpdateEvent")
+            .field("channel_id", &self.channel_id)
+            .field("endpoint", &self.endpoint)
+            .field("guild_id", &self.guild_id)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1393,6 +1419,7 @@ pub struct WebhookUpdateEvent {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 #[serde(untagged)]
 pub enum GatewayEvent {
     Dispatch(u64, Event),
@@ -1402,8 +1429,6 @@ pub enum GatewayEvent {
     InvalidateSession(bool),
     Hello(u64),
     HeartbeatAck,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl<'de> Deserialize<'de> for GatewayEvent {
@@ -1475,6 +1500,7 @@ impl<'de> Deserialize<'de> for GatewayEvent {
 /// Event received over a websocket connection
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
 #[serde(untagged)]
 pub enum Event {
     /// A [`Channel`] was created.
@@ -1523,6 +1549,20 @@ pub enum Event {
     /// When a guild is unavailable, such as due to a Discord server outage.
     GuildUnavailable(GuildUnavailableEvent),
     GuildUpdate(GuildUpdateEvent),
+    /// An [`Invite`] was created.
+    ///
+    /// Fires the [`EventHandler::invite_create`] event handler.
+    ///
+    /// [`Invite`]: invite/struct.Invite.html
+    /// [`EventHandler::invite_create`]: ../../client/trait.EventHandler.html#method.invite_create
+    InviteCreate(InviteCreateEvent),
+    /// An [`Invite`] was deleted.
+    ///
+    /// Fires the [`EventHandler::invite_delete`] event handler.
+    ///
+    /// [`Invite`]: invite/struct.Invite.html
+    /// [`EventHandler::invite_delete`]: ../../client/trait.EventHandler.html#method.invite_delete
+    InviteDelete(InviteDeleteEvent),
     MessageCreate(MessageCreateEvent),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
@@ -1574,8 +1614,6 @@ pub enum Event {
     WebhookUpdate(WebhookUpdateEvent),
     /// An event type not covered by the above
     Unknown(UnknownEvent),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// Deserializes a `serde_json::Value` into an `Event`.
@@ -1659,6 +1697,8 @@ pub fn deserialize_event_with_type(kind: EventType, v: Value) -> Result<Event> {
         EventType::GuildRoleUpdate => {
             Event::GuildRoleUpdate(serde_json::from_value(v)?)
         },
+        EventType::InviteCreate => Event::InviteCreate(serde_json::from_value(v)?),
+        EventType::InviteDelete => Event::InviteDelete(serde_json::from_value(v)?),
         EventType::GuildUpdate => Event::GuildUpdate(serde_json::from_value(v)?),
         EventType::MessageCreate => Event::MessageCreate(serde_json::from_value(v)?),
         EventType::MessageDelete => Event::MessageDelete(serde_json::from_value(v)?),
@@ -1691,11 +1731,10 @@ pub fn deserialize_event_with_type(kind: EventType, v: Value) -> Result<Event> {
         },
         EventType::WebhookUpdate => Event::WebhookUpdate(serde_json::from_value(v)?),
         EventType::Other(kind) => Event::Unknown(UnknownEvent {
-            kind: kind.to_owned(),
+            kind,
             value: v,
             _nonexhaustive: (),
         }),
-        EventType::__Nonexhaustive => unreachable!(),
     })
 }
 
@@ -1709,6 +1748,7 @@ pub fn deserialize_event_with_type(kind: EventType, v: Value) -> Result<Event> {
 ///
 /// [`EventType::ChannelCreate`]: enum.EventType.html#variant.ChannelCreate
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum EventType {
     /// Indicator that a channel create payload was received.
     ///
@@ -1824,6 +1864,18 @@ pub enum EventType {
     ///
     /// [`GuildUpdateEvent`]: struct.GuildUpdateEvent.html
     GuildUpdate,
+    /// Indicator that an invite was created.
+    ///
+    /// This maps to [`InviteCreateEvent`].
+    ///
+    /// [`InviteCreateEvent`]: struct.InviteCreateEvent.html
+    InviteCreate,
+    /// Indicator that an invite was deleted.
+    ///
+    /// This maps to [`InviteDeleteEvent`].
+    ///
+    /// [`InviteDeleteEvent`]: struct.InviteDeleteEvent.html
+    InviteDelete,
     /// Indicator that a message create payload was received.
     ///
     /// This maps to [`MessageCreateEvent`].
@@ -1925,8 +1977,6 @@ pub enum EventType {
     /// This should be logged so that support for it can be added in the
     /// library.
     Other(String),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl<'de> Deserialize<'de> for EventType {
@@ -1961,6 +2011,8 @@ impl<'de> Deserialize<'de> for EventType {
                     "GUILD_ROLE_CREATE" => EventType::GuildRoleCreate,
                     "GUILD_ROLE_DELETE" => EventType::GuildRoleDelete,
                     "GUILD_ROLE_UPDATE" => EventType::GuildRoleUpdate,
+                    "INVITE_CREATE" => EventType::InviteCreate,
+                    "INVITE_DELETE" => EventType::InviteDelete,
                     "GUILD_UPDATE" => EventType::GuildUpdate,
                     "MESSAGE_CREATE" => EventType::MessageCreate,
                     "MESSAGE_DELETE" => EventType::MessageDelete,
@@ -2043,13 +2095,22 @@ pub struct VoiceSpeaking {
     pub(crate) _nonexhaustive: (),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct VoiceResume {
     pub server_id: String,
     pub session_id: String,
     pub token: String,
     #[serde(skip)]
     pub(crate) _nonexhaustive: (),
+}
+
+impl fmt::Debug for VoiceResume {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VoiceResume")
+            .field("server_id", &self.server_id)
+            .field("session_id", &self.session_id)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -2072,6 +2133,7 @@ pub struct VoiceClientDisconnect {
 ///
 /// [`voice`]: ../../voice/index.html
 #[derive(Clone, Debug, Serialize)]
+#[non_exhaustive]
 #[serde(untagged)]
 pub enum VoiceEvent {
     /// Server's response to the client's Identify operation.
@@ -2101,8 +2163,6 @@ pub enum VoiceEvent {
     ClientDisconnect(VoiceClientDisconnect),
     /// An unknown voice event not registered.
     Unknown(VoiceOpCode, Value),
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl<'de> Deserialize<'de> for VoiceEvent {

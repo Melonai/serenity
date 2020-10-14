@@ -1,4 +1,4 @@
-use super::super::id::AttachmentId;
+use crate::model::id::AttachmentId;
 
 #[cfg(feature = "model")]
 use reqwest::Client as ReqwestClient;
@@ -95,7 +95,7 @@ impl Attachment {
     ///     }
     /// }
     /// let token = std::env::var("DISCORD_TOKEN")?;
-    /// let mut client = Client::new(&token).event_handler(Handler).await?;
+    /// let mut client = Client::builder(&token).event_handler(Handler).await?;
     ///
     /// client.start().await?;
     /// #     Ok(())
